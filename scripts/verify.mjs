@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { run, compile, execute } from '../src/compiler.mjs';
+import { assertRepositoryPolicy } from './repository-policy.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const child = args => {
   const result = spawnSync(process.execPath, args, { cwd: root, stdio: 'inherit', timeout: 120_000 });
@@ -15,6 +16,8 @@ const child = args => {
 try {
   if (Number(process.versions.node.split('.')[0]) < 22) throw new Error('Node.js 22 or later is required');
   console.log(`Local runtime: ${process.version} / V8 ${process.versions.v8} / ${process.platform} ${process.arch}`);
+  assertRepositoryPolicy(root);
+  console.log('Repository policy: Node/Wasm-only source tree passed');
   for (const dir of ['src', 'scripts', 'benchmarks', 'tests'])
     for (const name of readdirSync(join(root, dir)).filter(n => n.endsWith('.mjs')).sort()) child(['--check', join(dir, name)]);
   child(['--test', ...readdirSync(join(root, 'tests')).filter(n => n.endsWith('.test.mjs')).sort().map(n => join('tests', n))]);

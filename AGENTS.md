@@ -1,33 +1,39 @@
 # Working on TT
 
-The owner authorizes direct commits to mewhhaha/tt main and hourly exploration of a
+The owner authorizes direct commits to mewhhaha/tt main and ongoing exploration of a
 fast refinement-first structural language. Preserve concurrent changes and never
 force-push. Publishing packages, deploying, editing permissions, and modifying
 other repositories are not authorized.
 
 ## Current implementation and local execution
 
-The owner explicitly selected **Node.js** on 2026-09-16. The active execution path of this
-prototype is JavaScript ES modules in src/*.mjs, not the retained reference C++ implementation.
-Keep it locally runnable with Node alone. **WebAssembly is the ONLY output target.**
-`run` compiles and executes real Wasm; no TT bytecode VM, JavaScript output, or native
-code target is allowed. The host only loads Wasm and decodes results, never interprets
-TT. No interpreter embedded inside Wasm may substitute for direct compilation. No CI artifact, native compiler, hosted
-checker, or install step may be a prerequisite. There are no npm dependencies.
+The implementation is **dependency-free Node.js ES modules**. **WebAssembly is the
+ONLY executable output target.** `run` compiles and executes real Wasm; no TT
+bytecode VM, JavaScript executable output, native code target, or embedded
+interpreter is allowed. The host validates/instantiates Wasm and decodes values; it
+does not evaluate TT operations. No native compiler, Python, package installation,
+CI artifact, hosted checker, or third-party runtime is a prerequisite.
 
-Read docs/STATUS.md, docs/DESIGN.md, docs/ROADMAP.md, docs/LOCAL_DEVELOPMENT.md,
-docs/PRODUCTION_READINESS.md and recent commits before choosing work. Inspect live
-main; do not assume a previous temporary workspace or checkpoint is current.
+The current branch must not contain a parallel C++/Python implementation. Historical
+notes and benchmark evidence may remain as documentation/data, but active or dormant
+`.cpp`, `.hpp`, `.py`, and `CMakeLists.txt` implementation files are forbidden by
+`scripts/repository-policy.mjs` and local verification.
+
+Read docs/STATUS.md, docs/DESIGN.md, docs/WASM.md, docs/ROADMAP.md,
+docs/LOCAL_DEVELOPMENT.md, docs/PRODUCTION_READINESS.md and recent commits before
+choosing work. Inspect live main; do not assume a previous temporary workspace or
+checkpoint is current.
 
 Run locally:
 
     npm test
     npm run verify
     npm run bench -- --sizes 500,1000,2000 --samples 11
+    npm run bench:runtime
 
-The direct equivalent of verify is node scripts/verify.mjs. CI is optional
+The direct equivalent of verify is `node scripts/verify.mjs`. CI is optional
 corroboration, never a substitute for a claimed local run. Report missing execution
-or repository access honestly. JavaScript tests are not ASan/UBSan evidence.
+or repository access honestly.
 
 ## Iteration discipline
 
@@ -35,9 +41,10 @@ Choose a bounded useful improvement and a falsifiable hypothesis. Add acceptance
 rejection, runtime and adversarial tests; run relevant work/performance regressions.
 Record exact commands, counts, failures, source/runtime provenance, and next work in
 docs/STATUS.md and docs/ITERATIONS.md. Never fabricate tests or reuse stale hashes.
-Benchmark startup, checking, emitting, Wasm engine compilation/instantiation/execution, and incidental GC as distinct
-boundaries. RSS snapshots are not peak memory. Do not infer asymptotic guarantees
-from one median. Reread main before publication and push one coherent state.
+Benchmark startup, checking, emitting, Wasm engine compilation/instantiation/execution,
+and incidental GC as distinct boundaries. RSS snapshots are not peak memory. Do not
+infer asymptotic guarantees from one median. Reread main before publication and push
+a coherent state.
 
 ## Architectural constraints
 
@@ -57,4 +64,5 @@ forged through structural records or reflection.
 
 Do not call the compiler production-ready until every documented gate has evidence.
 Do not shrink the gates to finish. Once genuinely complete, report the evidence and
-disable the hourly task. Until then, keep implemented semantics distinct from plans.
+disable the recurring development task. Until then, keep implemented semantics
+distinct from plans.
