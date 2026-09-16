@@ -86,4 +86,5 @@ Node remains the implementation language; Wasm is the compilation target. Saved
 TTBC is unsupported, and `src/bytecode.mjs` / `src/vm.mjs` are removed. Public API:
 `compile(source).wasm`, `check(source)`, `execute(bytes)`, `run(source)`.
 There are no `encode`, `decode`, or `VM` exports. Build paths must end in `.wasm`.
-Legacy C++ files, when present in main, are historical reference only.
+Legacy C++/Python implementation files are not permitted on current main; historical
+provenance remains in `docs/HISTORY_CPP.md`, `docs/ITERATIONS.md`, and benchmark JSON.

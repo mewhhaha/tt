@@ -1,23 +1,14 @@
-/build*/
-*.ttbc
 *.tmp
 *.tmp.*
-__pycache__/
 *.log
-/smoke
-/src/smoke.cpp
-/benchmarks/local.json
-/*.pid
-/*.exit
-/*-exit.txt
 
-# Active Node workflow
+# Local Node workflow
 node_modules/
-benchmarks/local.json
 coverage/
 *.cpuprofile
 *.heapprofile
-
-# Wasm-only active output
-*.wasm
+benchmarks/local.json
 benchmarks/wasm-runtime-local.json
+
+# Wasm-only compiler output
+*.wasm
