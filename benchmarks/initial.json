@@ -1,0 +1,99 @@
+{
+  "compiler_version": "c++ (Debian 14.2.0-19) 14.2.0\nCopyright (C) 2024 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n",
+  "schema": 1,
+  "recorded_at": "2026-09-16T18:05:34.614221+00:00",
+  "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "machine": "x86_64",
+  "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+  "logical_cpus": 5,
+  "python": "3.13.5",
+  "compiler_build_settings": [
+    "CMAKE_BUILD_TYPE:STRING=Release",
+    "CMAKE_CXX_COMPILER:UNINITIALIZED=/usr/bin/c++",
+    "CMAKE_CXX_FLAGS:STRING=",
+    "CMAKE_CXX_FLAGS_DEBUG:STRING=-g",
+    "CMAKE_CXX_FLAGS_MINSIZEREL:STRING=-Os -DNDEBUG",
+    "CMAKE_CXX_FLAGS_RELEASE:STRING=-O3 -DNDEBUG",
+    "CMAKE_CXX_FLAGS_RELWITHDEBINFO:STRING=-O2 -g -DNDEBUG",
+    "CMAKE_CXX_FLAGS-ADVANCED:INTERNAL=1",
+    "CMAKE_CXX_FLAGS_DEBUG-ADVANCED:INTERNAL=1",
+    "CMAKE_CXX_FLAGS_MINSIZEREL-ADVANCED:INTERNAL=1",
+    "CMAKE_CXX_FLAGS_RELEASE-ADVANCED:INTERNAL=1",
+    "CMAKE_CXX_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1"
+  ],
+  "binary_sha256": "e9fdaa345370bcf8114926fa3e86802c60e41f990a92f74878c62df5a801ed5a",
+  "source_sha256": {
+    "CMakeLists.txt": "8272652368660441c7e523b6a2bd9eb4a4000a48c4c0fc4d359bff066ea4ff4d",
+    "benchmarks/bench.cpp": "22fff6fe2fdb1bdd82d3c77e689caf3c082568de6c6c6260fca7e8e6af7ec0c4",
+    "benchmarks/run.py": "50b8f2f6e7856050a4ade16d434362552e9f5e60db21a9db19f1472e197b7170",
+    "src/bytecode.hpp": "26a7dc9057c91050d0c8791854a694a7e5e67f369e157ffb94e337a133c0aca7",
+    "src/main.cpp": "ec1e86db12b7b365799aa21f83b7ffcfef928f40ba64a8fa4712e03fea183e7f",
+    "src/pipeline.hpp": "cc7a3683a6e56f94bc1551317cb4b3b327710d6379bf40e53e32a4428f6e27f3",
+    "src/refine.hpp": "31d7ce91efbae33bf0f3d30f963ca18d7b1d32e73ba6cd7bdc89f62b1d86d96a",
+    "src/syntax.hpp": "677fa1246e8e2107b6326c668eaf3335457e55b752e9b26bda34eddcb9f573ab",
+    "src/types.hpp": "be09627750f26e0ffc25cc0a5b5fbcc30c69b998504ac1e8586ff7ccc866d764"
+  },
+  "reports": [
+    {
+      "schema": 1,
+      "size": 500,
+      "samples": 11,
+      "boundary": "in-process parse+infer+refine+emit+validate; includes destruction; excludes input generation and artifact encoding",
+      "workloads": [
+        {
+          "name": "wrappers",
+          "source_bytes": 11314,
+          "median_ms": 4.44046,
+          "raw_ms": [4.44046,3.55413,1.78219,5.37549,4.64914,4.56497,5.03236,3.3812,5.39877,2.98648,3.54027],
+          "work": {"parse_ms":0.766383,"type_ms":3.63612,"refine_ms":0.087085,"emit_ms":0.185061,"ast_nodes":2006,"type_nodes":3036,"unify_steps":1504,"occurs_visits":1002,"instantiate_visits":1503,"generalize_visits":1023,"projection_steps":0,"proof_steps":3008}
+        },
+        {
+          "name": "records",
+          "source_bytes": 13084,
+          "median_ms": 3.14096,
+          "raw_ms": [2.72704,5.45448,2.43344,4.59756,3.14096,1.41647,4.12918,6.26544,1.31366,4.98116,1.26529],
+          "work": {"parse_ms":3.01171,"type_ms":0.092248,"refine_ms":0.135784,"emit_ms":0.093623,"ast_nodes":1503,"type_nodes":32,"unify_steps":0,"occurs_visits":0,"instantiate_visits":0,"generalize_visits":524,"projection_steps":500,"proof_steps":1503}
+        },
+        {
+          "name": "polymorphism",
+          "source_bytes": 21329,
+          "median_ms": 9.24025,
+          "raw_ms": [25.5475,15.155,6.91738,7.13649,9.2209,9.49883,7.29343,9.24025,13.0095,9.70218,5.74744],
+          "work": {"parse_ms":3.9842,"type_ms":4.05506,"refine_ms":0.529875,"emit_ms":0.160741,"ast_nodes":3507,"type_nodes":7038,"unify_steps":5501,"occurs_visits":3004,"instantiate_visits":4500,"generalize_visits":525,"projection_steps":0,"proof_steps":8507}
+        },
+        {
+          "name": "refinements",
+          "source_bytes": 10957,
+          "median_ms": 2.08648,
+          "raw_ms": [2.64677,2.34434,3.37798,0.962503,2.08648,2.77466,1.38013,0.936319,5.62417,1.11924,0.93829],
+          "work": {"parse_ms":0.47014,"type_ms":4.23684,"refine_ms":0.223149,"emit_ms":0.062654,"ast_nodes":1506,"type_nodes":1033,"unify_steps":2505,"occurs_visits":501,"instantiate_visits":0,"generalize_visits":523,"projection_steps":0,"proof_steps":3010}
+        }
+      ]
+    },
+    {
+      "schema": 1,
+      "size": 1000,
+      "samples": 11,
+      "boundary": "in-process parse+infer+refine+emit+validate; includes destruction; excludes input generation and artifact encoding",
+      "workloads": [
+        {"name":"wrappers","source_bytes":22816,"median_ms":8.10935,"raw_ms":[15.3139,8.21095,4.61949,9.35885,8.10935,9.174,5.97619,6.2177,9.10483,5.98658,7.2411],"work":{"parse_ms":7.10284,"type_ms":0.540363,"refine_ms":0.109777,"emit_ms":0.822675,"ast_nodes":4006,"type_nodes":6036,"unify_steps":3004,"occurs_visits":2002,"instantiate_visits":3003,"generalize_visits":2023,"projection_steps":0,"proof_steps":6008}},
+        {"name":"records","source_bytes":26584,"median_ms":7.34536,"raw_ms":[14.9801,9.07089,9.57762,7.64328,7.34536,5.45261,3.98317,7.59438,5.85266,5.34678,5.46036],"work":{"parse_ms":6.2595,"type_ms":0.182307,"refine_ms":0.215171,"emit_ms":0.352171,"ast_nodes":3003,"type_nodes":32,"unify_steps":0,"occurs_visits":0,"instantiate_visits":0,"generalize_visits":1024,"projection_steps":1000,"proof_steps":3003}},
+        {"name":"polymorphism","source_bytes":42829,"median_ms":14.9498,"raw_ms":[18.8054,14.9498,16.9682,19.6557,20.4635,17.3356,11.9367,12.7503,13.6826,13.043,12.4551],"work":{"parse_ms":8.79281,"type_ms":1.58807,"refine_ms":0.907485,"emit_ms":0.297732,"ast_nodes":7007,"type_nodes":14038,"unify_steps":11001,"occurs_visits":6004,"instantiate_visits":9000,"generalize_visits":1025,"projection_steps":0,"proof_steps":17007}},
+        {"name":"refinements","source_bytes":21907,"median_ms":4.35764,"raw_ms":[3.50438,4.87608,3.86953,4.71472,4.5012,4.35764,3.79512,2.75011,5.47542,5.37441,2.91176],"work":{"parse_ms":3.57905,"type_ms":0.349438,"refine_ms":0.432903,"emit_ms":0.116425,"ast_nodes":3006,"type_nodes":2033,"unify_steps":5005,"occurs_visits":1001,"instantiate_visits":0,"generalize_visits":1023,"projection_steps":0,"proof_steps":6010}}
+      ]
+    },
+    {
+      "schema": 1,
+      "size": 2000,
+      "samples": 11,
+      "boundary": "in-process parse+infer+refine+emit+validate; includes destruction; excludes input generation and artifact encoding",
+      "workloads": [
+        {"name":"wrappers","source_bytes":47816,"median_ms":17.1253,"raw_ms":[20.2391,23.0359,14.4763,16.2815,20.8857,17.1253,16.7016,16.3398,11.6383,18.2807,18.0898],"work":{"parse_ms":7.98316,"type_ms":6.04676,"refine_ms":0.20436,"emit_ms":3.54548,"ast_nodes":8006,"type_nodes":12036,"unify_steps":6004,"occurs_visits":4002,"instantiate_visits":6003,"generalize_visits":4023,"projection_steps":0,"proof_steps":12008}},
+        {"name":"records","source_bytes":57585,"median_ms":17.5359,"raw_ms":[16.3557,18.0591,21.18,19.8663,19.0645,17.5359,15.253,14.4385,24.8796,14.2585,16.2403],"work":{"parse_ms":12.0973,"type_ms":0.37066,"refine_ms":2.01725,"emit_ms":0.359479,"ast_nodes":6003,"type_nodes":32,"unify_steps":0,"occurs_visits":0,"instantiate_visits":0,"generalize_visits":2024,"projection_steps":2000,"proof_steps":6003}},
+        {"name":"polymorphism","source_bytes":87830,"median_ms":40.2593,"raw_ms":[45.1784,56.9957,53.0686,54.4809,58.1609,40.2593,24.0991,27.4937,27.1429,36.542,28.8102],"work":{"parse_ms":15.7812,"type_ms":8.61358,"refine_ms":2.50994,"emit_ms":0.638343,"ast_nodes":14007,"type_nodes":28038,"unify_steps":22001,"occurs_visits":12004,"instantiate_visits":18000,"generalize_visits":2025,"projection_steps":0,"proof_steps":34007}},
+        {"name":"refinements","source_bytes":44808,"median_ms":9.03238,"raw_ms":[9.03238,9.79946,5.88502,10.6929,7.6009,9.88495,9.41482,8.0172,7.74202,7.47685,10.5877],"work":{"parse_ms":3.79379,"type_ms":1.72723,"refine_ms":2.85798,"emit_ms":0.239232,"ast_nodes":6006,"type_nodes":4033,"unify_steps":10005,"occurs_visits":2001,"instantiate_visits":0,"generalize_visits":2023,"projection_steps":0,"proof_steps":12010}}
+      ]
+    }
+  ],
+  "claims": "Local in-process compiler timings, not cold-process latency, runtime speed, or production qualification. Shared-host wall times are observations; deterministic work gates are enforced."
+}

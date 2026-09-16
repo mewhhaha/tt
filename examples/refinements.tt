@@ -1,0 +1,7 @@
+const Small = Int where self >= 0 && self < 100;
+const Positive = Int where self > 0;
+
+let increment :: Small -> Positive = fn value => value + 1;
+// The explicit contract preserves the scalar bound across this call.
+let getX :: { .x: Small; } -> Small = fn record => record.x;
+return increment (getX { .x = 41; .name = "example"; });

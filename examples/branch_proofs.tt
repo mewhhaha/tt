@@ -1,0 +1,7 @@
+const Positive = Int where self > 0;
+let keepPositive :: Int -> Int = fn value =>
+    if value > 0 then do {
+        let checked :: Positive = value;
+        return checked;
+    } else 0;
+return map keepPositive [-2, 0, 42];

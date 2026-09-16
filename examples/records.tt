@@ -1,0 +1,10 @@
+let getX = fn record => record.x;
+let move = fn delta => fn entity => {
+    .position = getX entity + delta;
+    .name = entity.name;
+};
+let entities = [
+    { .x = 10; .name = "first"; },
+    { .x = 20; .name = "second"; }
+];
+return map (move 3) entities;

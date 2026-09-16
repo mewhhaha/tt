@@ -1,0 +1,12 @@
+/build*/
+*.ttbc
+*.tmp
+*.tmp.*
+__pycache__/
+*.log
+/smoke
+/src/smoke.cpp
+/benchmarks/local.json
+/*.pid
+/*.exit
+/*-exit.txt
