@@ -1,69 +1,93 @@
-# TT status — 2026-09-16
+# TT status — Node compiler, WebAssembly-only output — 2026-09-16
 
-**Research prototype. Not production-ready.** This complete local source snapshot
-builds and executes without CI, network access, downloaded artifacts, or language
-dependencies after installing the documented C++/CMake/Python toolchain.
+**Research prototype, not production-ready.** The compiler and all active tools
+are JavaScript ES modules running locally under Node. The sole executable target
+is standard Core WebAssembly. This replaces the previous Node TTBC emitter/VM;
+no interpreter or alternate executable target remains in active sources.
 
-## Implemented and exercised locally
+## Implemented and preserved
 
-Blot-inspired `let`, `fn`, records, field access, application, semicolon blocks,
-conditionals, arrays, and type aliases. Level-based let polymorphism and structural
-row inference. Integer interval-set refinements, checked pre/postconditions,
-contravariant higher-order contract checks, direct branch facts, lexical closures,
-bytecode emission/validation/serialization, and a budgeted VM with checked arithmetic.
-See `DESIGN.md` and `SYNTAX.md` for the exact fragment; the project name does not
-imply an implemented arbitrary predicate logic or full Blot compatibility.
+The existing structural/refinement frontend is retained: let polymorphism, open
+record requirements, closures and higher-order functions, arrays/map/fold, strict
+records/conditionals, UTF-8 Text, full signed-i64 arithmetic, interval-set contracts,
+checked callable pre/postconditions, contravariant input requirements and scoped
+branch facts. Compact symbolic evidence now transports direct parameter, projection,
+record and higher-order application relationships without call-site body rechecking.
 
-## Local evidence
+The new backend lowers checked syntax to Wasm functions, structured branches, an
+indirect-call table and explicit closure environments. Runtime helpers for checked
+arithmetic, arrays, field access, text and currying are emitted in Wasm. The emitter
+now links only helpers reachable from source operations and actually referenced
+native values, including transitive future targets of curried closures. Artifacts
+have zero host imports. The JavaScript loader decodes results but does not evaluate
+TT operations. There is no VM inside the Wasm module.
 
-`python3 dev.py verify --build-dir build-local --samples 11` completed successfully:
-57 end-to-end conformance tests (with additional generated subcases), 191,757 kernel
-property checks, seven local-driver tests, all four example source/artifact
-round-trips, and benchmark work gates at sizes 500/1,000/2,000 with 11 samples each.
-The implementation was compiled locally with GCC 14.2.0, CMake 3.31.6, and
-Python 3.13.5 on Linux x86_64. The final CTest aggregate was 3/3 passing.
+`check` runs the frontend only. `compile(source).wasm` and CLI `build` emit .wasm;
+`run` compiles then executes Wasm. The public API no longer exports VM/encode/decode.
+`exec` accepts the versioned TT Wasm ABI and refuses legacy TTBC. See WASM.md.
 
-`python3 dev.py sanitize` also completed successfully with Clang 17.0.0, ASan,
-UBSan, and leak checking: 3/3 CTest suites passed. No CI result was used as evidence
-for either run. Raw performance data is in `benchmarks/initial.json`. A fresh automation-run
-verification also completed locally from this source tree on 2026-09-16 using
-`python3 dev.py verify --build-dir build-auto --samples 7`; the initial build step
-exceeded the tool-call wall-clock limit while compiling `tt-bench`, then the resumed
-build and complete verify passed. A fresh Clang 17 ASan/UBSan/leak-checking CTest
-run in `build-auto-sanitize` was 3/3 passing. No CI result was used.
+## Local verification
 
-The clean local workflow found an example that incorrectly assumed an unannotated
-generic getter preserved scalar bounds. The example now uses an explicit checked
-contract; the README and all examples are executable regressions. Preserving these
-bounds through generic abstractions remains planned work, not a hidden success.
+Actual runtime: Node 22.16.0, V8 12.4.254.21-node.26, Linux x86_64. No CI artifact,
+native compiler, Python or third-party package was used for this verification.
 
-GCC emits an array-bounds warning in optimized standard-library vector-copy code
-in the property test. Sanitizers did not report an error in that test, but the
-warning has not been independently reduced/classified; warning-free qualification
-is not claimed. Mac/Windows-native portability is not qualified.
+Commands: `node --test tests/*.test.mjs` and `node scripts/verify.mjs`.
 
-## Not implemented
+- 102 tests passed, 0 failed, including all 75 captured source fixtures, generic-
+  refinement substitution/variance regressions, and demanded-runtime linking.
+- 191,751 structural/refinement kernel assertions passed. Six legacy VM checks
+  were deliberately removed and replaced by Wasm-specific tests; the older
+  191,757 total is NOT claimed for this backend.
+- 2,020 boundary/generated i64 arithmetic cases agree with independent BigInt
+  arithmetic, including traps. The existing 300 generated arithmetic expressions,
+  refinement decisions, 1,000 malformed-source and 500 malformed-byte cases pass.
+- Four examples and the README program check, compile, validate and execute.
+- A saved .wasm runs in a separate Node process using only WebAssembly.Module /
+  Instance and DataView, without the TT source tree, original source or runner.
+- Demand/trap order, short circuiting, alias/capture correspondence, higher-order
+  collections, memory growth, fuel exhaustion/reset, integrity checks, bounded
+  result decoding, deterministic artifacts and atomic output writes are tested.
+- Compile work/size gates pass at 500/1,000/2,000 items, 11 samples per workload,
+  including a refinement-relation wrapper chain with counted evidence substitutions.
+  Separate Wasm engine-stage measurements pass for 1,000-element map/fold with
+  checksum 500500, 11 samples and 100 main calls per sample.
+- A literal-only artifact now links 5 runtime helpers and has 7 total Wasm functions
+  / 573 bytes, versus 41 functions / 2,275 bytes in the pre-change snapshot. At the
+  1,000-item compile workloads, dead stripping removes 26-29 functions and
+  1,296-1,457 bytes depending on workload. Wall-clock compile samples remain noisy;
+  no compilation-speed claim is made from this change.
 
-Algebraic effects/handlers, first-class compile-time type values, general const
-execution, static parameters, declaration tags, nominal evidence, variants,
-recursion, modules, ownership, incremental compilation, and native/Wasm codegen.
-Higher-order refinement abstraction is deliberately conservative. Runtime indexing
-is checked but may trap. The bytecode validator is not a typing certificate or
-an audited sandbox. All production gates remain open.
+Committed matched compile evidence: `benchmarks/helper-linking-1000.json` retains
+all eleven raw total samples for the n=1,000 before/after workloads plus focused
+size/work metrics. `benchmarks/helper-linking-runtime.json` retains the raw
+engine-stage samples. The full 500/1,000/2,000 raw benchmark runs were executed
+locally for verification but are not required by the active workflow or committed.
+Earlier handoff logs and obsolete backend benchmark files are historical only. No matched speedup over differing pipelines,
+cross-engine qualification or soundness proof is claimed. The committed evidence keeps
+raw total samples and phase medians; benchmark boundaries still distinguish checking/emitting
+from Wasm engine validation/compilation/instantiation and execution.
 
-## Publication state
+## Deliberate limitations
 
-The documentation-only checkpoint `22e0272779a22ee647c47f69aed855adfcc26648`
-was the last branch state before source handoff. This snapshot is the complete
-compiler source intended for the atomic handoff commit based on that checkpoint.
-Once this file is present together with `src/`, `tests/`, `examples/`, `dev.py`,
-and `CMakeLists.txt` on `main`, cloning the repository is sufficient to build and
-run the compiler locally; no conversation attachment is required.
+The Wasm heap boxes generic values, uses a bounded per-main bump allocator and
+linear record lookup. It has no GC, reclaiming ownership system, persistent host
+object ABI or exported callable-closure interface. Runtime source locations are
+not yet precise. Metadata/digests/fuel are NOT an audited hostile-module sandbox.
 
-## Next work
+Variants, recursion, modules, inferred effects and handlers, nominal declaration
+metadata, general compile-time evaluation, static parameters, declaration tags,
+ownership and incremental compilation remain open. Generic refinement transport is
+still conservative for symbolic arithmetic and unsummarized collection primitives.
+Production gates are unchanged and unchecked.
 
-After the complete source handoff, add adversarial higher-order and row tests,
-improve maintainability, and test
-compact refinement relationships through generic functions without body rechecking.
-Continue the ordered roadmap; effects/staging and the ECS vertical slice remain
-required research milestones. Local execution is mandatory, CI only corroborative.
+## Repository state
+
+The active source tree is the dependency-free Node/Wasm implementation described
+above. Retained native C++ files and older build scripts are historical reference
+only and must not participate in the supported local workflow. The previous
+source-handoff blocker is recorded in ITERATIONS.md as history rather than as a
+current semantic limitation.
+
+Next: audit the Wasm ABI and allocator, extend bounded refinement relations to
+selected arithmetic/container primitives, and continue effects/staging without
+adding another output target. See ROADMAP.md and production gates.

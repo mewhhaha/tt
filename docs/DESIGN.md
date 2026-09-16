@@ -11,14 +11,24 @@ The executable slice deliberately separates three questions:
 
 1. Which operations does a value support? Structural inference answers this.
 2. Which additional properties are established? A refinement pass answers this.
-3. How is checked code represented and executed? Closure conversion, bytecode,
-   structural artifact validation, and a VM answer this.
+3. How is checked code represented and executed? Closure conversion, direct Wasm functions, engine validation, and an explicit
+   linear-memory ABI answer this.
 
 The annotation API presents normal scalar, record, array, and function contracts
 alongside refinements. Not every predicate has been reduced to userland primitive
-calls yet; CK and TK in the implementation are trusted constructors. Claiming that
+calls yet; the contract and shape constructors in the implementation are trusted. Claiming that
 all language features have already been derived from a single predicate would be
 incorrect.
+
+## Node.js implementation
+
+The compiler is dependency-free JavaScript ES modules running locally on Node.
+The only output is Core WebAssembly. Node's WebAssembly engine executes generated
+functions; arithmetic, captures, higher-order calls and collection primitives run
+inside the module with no host imports. JavaScript handles source checking,
+emission, loading and result decoding, not TT evaluation. BigInt is used during
+checking, while emitted arithmetic uses checked Wasm i64 instructions. Text length
+is UTF-8 bytes. See WASM.md for the representation and its current limitations.
 
 ## Current structural fragment
 
@@ -57,11 +67,26 @@ The refinement judgment is conceptually:
     inferred shape + established evidence entails the required contract
 
 Evidence is separate from an unresolved type variable. Null evidence means the
-full *structural type at this occurrence*, not an untyped universal value. Typed
-function/record/array evidence is interpreted using the instantiated structural
-shape. Generic identity currently loses scalar precision but must reject erasure
-of a function precondition. This is conservative, not a complete inference of all
-valid higher-order refinements.
+full *structural type at this occurrence*, not an untyped universal value. A distinct
+internal wildcard represents an unannotated parameter whose refinement evidence is
+polymorphic: callers may supply a more refined scalar, record field, or callable.
+The wildcard is not a proof that an unknown callback accepts every argument.
+
+Unannotated lambdas publish compact evidence templates keyed by their parameter
+binding. Templates can contain parameter references, structural field projections,
+and symbolic applications. A call substitutes argument evidence into this finite
+template; it never rechecks the source body. This preserves refinements through
+identity, record projection/packaging, aliases, and higher-order identity/composition.
+When substituting a refined callback reveals a precondition on a still-symbolic
+argument, that obligation is retained and strengthens the corresponding returned
+function domain. Thus `apply positiveOnly` remains positive-only instead of being
+silently widened or rejected merely because `apply` was inferred generically.
+
+Evidence substitution is counted against the same refinement-work budget and has a
+dedicated work counter. Incomparable dependent callable requirements fail closed
+rather than inventing an unsafe common contract. This is still not full dependent
+typing: symbolic arithmetic transforms, arbitrary user predicates, and general
+container-operation summaries are not inferred.
 
 ## Functions and abstraction
 
@@ -70,20 +95,22 @@ The body is checked with its parameter assumption and must establish its result
 contract. A call must establish the precondition before using the postcondition.
 Function input entailment is contravariant; output entailment is covariant.
 
-An unannotated parameter has its full inferred structural contract. Calling a
-positive-only function through an unannotated callback parameter is not justified
-just because the callback was passed as a value. Current higher-order abstraction
-may reject valid programs that a dependent/qualified scheme could express. Use an
-explicit callback contract rather than dropping the obligation.
+An unannotated parameter has a polymorphic refinement-evidence variable over its
+inferred structural shape. This permits helpers that merely forward, project, store,
+or apply values to remain generic over caller refinements. Unknown callback
+preconditions are not assumed away: once a concrete callback is supplied, any
+precondition discovered through a symbolic application becomes a deferred checked
+obligation. Unsupported dependency shapes are rejected rather than weakened.
 
 Joins of differently refined callable preconditions are deliberately restricted.
 A common explicit contract can be checked contextually. The compiler does not
 silently manufacture a broad, unsafe callable at a branch or array join.
 
-Scalar summaries preserve constants and bounded arithmetic results but are not
-symbolic relations to parameters. `fn x => x` does not currently transport a
-caller's arbitrary scalar predicate. A postcondition does not assert termination
-or freedom from traps.
+Scalar summaries preserve constants and bounded arithmetic results. Exact parameter
+identity and structural projection now transport a caller's scalar predicate, but
+arithmetic summaries are still value-set approximations: `fn x => x + 1` does not
+yet publish a symbolic affine relation to an arbitrary caller interval. A
+postcondition does not assert termination or freedom from traps.
 
 ## Control flow and arithmetic
 
@@ -93,7 +120,7 @@ Conjunction is decomposed in the true branch, disjunction in the false branch;
 unsupported combinations conservatively contribute no facts. Branch changes are
 journaled and restored. Binding IDs, not variable spellings, own the facts.
 
-Arithmetic abstract transfer uses checked wide intermediates. If an operation's
+Arithmetic abstract transfer uses exact BigInt intermediates. If an operation's
 abstract endpoints may overflow, its result evidence is conservatively widened to
 Int. Runtime arithmetic traps on signed overflow and zero division. Remainder
 uses wide arithmetic, so MIN % -1 is 0; MIN / -1 traps. `get` is bounds-checked but
@@ -105,30 +132,35 @@ differences from some of Blot's demand rules.
 
 ## Compilation and artifacts
 
-The compiler emits a stack bytecode with explicit function bodies, capture
-vectors, locals, jumps, records, arrays, and checked primitives. Closures retain
-values rather than revisiting source bodies at calls. Records currently use a
-simple runtime field lookup; runtime optimization is separate from inference.
+The backend walks checked syntax directly. Each lambda becomes a Wasm function
+with an explicit captured environment; branches use structured Wasm control flow.
+Calls use `call_indirect` with a uniform `(i32, i32) -> i32` closure ABI. This is
+not a TT bytecode interpreter compiled into Wasm. The old TTBC emitter/VM has been
+removed from active sources, and old artifacts are deliberately not accepted.
 
-TTBC version 1 has a fixed magic, little-endian integers, length-delimited pools,
-and explicit function headers. The reader bounds all lengths, rejects trailing
-bytes, and validates operands, targets, stack heights, and returns. Runtime kind
-checks remain at artifact boundaries. This is a structural bytecode validator,
-**not** a serialized proof that arbitrary supplied bytecode was typechecked.
-There is no stable ABI or claim that the VM is an audited hostile-code sandbox.
+Wasm validation checks structural and machine-type validity, not a proof of TT's
+source refinements. A versioned `tt.abi` custom section describes labels and binds
+the module bytes with a digest. The digest detects corruption, not authenticity.
+Pure artifacts have no imports. The private heap uses tagged values and a bounded
+bump allocator; generic boxing and linear field lookup are deliberately simple
+initial choices, not claims of optimized runtime performance. See WASM.md.
 
 ## Explicit limits
 
-Source: 4 MiB, 500,000 tokens, 200,000 AST nodes. Parser/checker traversal nesting:
-256. Types: 1,000,000 nodes. Predicate partitions: 256 intervals. Refinement work:
-2,000,000 counted steps. Artifact: 64 MiB and 2,000,000 instructions. Default VM:
-10,000,000 fuel units, 1,000,000 allocated value/local cells per category, 32 MiB
-cumulative text allocation, 4 MiB per text, and 128 nested value containers.
+Source: 4 MiB, 500,000 tokens, 200,000 AST nodes. Parser/checker nesting: 256.
+Types: 1,000,000 nodes. Predicate partitions: 256 intervals. Refinement work:
+2,000,000 counted steps. Artifact: 64 MiB; static pool: 32 MiB. Each Wasm function
+has at most 49,998 generated locals. Linear memory has a 64 MiB maximum, call depth
+is bounded at 256, value nesting at 128, individual Text at 4 MiB. Default fuel is
+10,000,000 Wasm-runtime tick units; ticks charge source expressions, calls and
+runtime loops, not the obsolete TTBC instruction count.
 
-Limits intentionally distinguish E_LIMIT from a failed typing premise. They are
-prototype guardrails, not an established end-to-end memory/time bound. Limits,
-invalid input behavior, and amplification need further auditing before untrusted
-use. Allocation and execution limits are cumulative, not live-set estimates.
+Limits are prototype guardrails, not an end-to-end compiler time/memory guarantee.
+Each `main` call resets its allocator/fuel/depth; returned pointers last only until
+the next call. No garbage collector or general escaping host-callable closure ABI
+is implemented. E_LIMIT is distinct from failure of a typing premise. Untrusted
+Wasm can forge metadata or skip fuel checks: this loader is not a hostile-artifact
+sandbox and must not run arbitrary uploads in a shared Node process.
 
 ## Further experiments
 
@@ -153,3 +185,16 @@ use. Allocation and execution limits are cumulative, not live-set estimates.
 
 These motivate experiments; neither is a correctness proof of TT. No third-party
 implementation code was copied into this prototype.
+
+The interval algebra now merges canonical runs and tests inclusion directly in
+linear passes. Intersection and complement also enforce the partition limit. This
+is a bounded-fragment implementation choice, not a whole-compiler complexity claim.
+
+## Wasm specification references
+
+Binary modules and instruction encodings follow the WebAssembly Core specification:
+https://webassembly.github.io/spec/core/binary/modules.html
+https://webassembly.github.io/spec/core/binary/instructions.html
+Node's built-in engine interface is documented at:
+https://nodejs.org/en/learn/getting-started/nodejs-with-webassembly
+Accessed 2026-09-16. These are encoding/API references, not proof of TT correctness.

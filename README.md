@@ -1,103 +1,116 @@
-# TT
+# TT — Node.js compiler, WebAssembly-only output
 
-A refinement-first structural functional language experiment, focused on a small
-semantic core, useful abstractions, and fast source compilation. The syntax is
-inspired by [Blot](https://github.com/mewhhaha/blot); this is a separate language,
-not a compatible implementation or a Blot fork.
+TT is a research compiler for a structural functional language with bounded integer
+refinements. **The compiler is JavaScript running in Node; programs compile only
+to real WebAssembly.** No custom-bytecode VM, source interpreter, JavaScript output
+or native output is part of the active compiler.
 
-**Research prototype. Not production-ready.** Implemented capabilities and gaps
-are tracked in [STATUS](docs/STATUS.md). [Readiness gates](docs/PRODUCTION_READINESS.md)
-are deliberately stricter than “the examples pass.”
+No C++, Python, package installation, external solver or CI artifact is needed.
+Local verification uses Node 22.16.0 on Linux x86_64. Node 22+ is intended; other
+platforms and engines are not yet qualified. **This is not production-ready.**
 
-## Build and verify locally
-
-Local execution is the primary workflow. Nothing downloads a CI artifact or calls
-a hosted compiler. After installing the local prerequisites, builds, tests, and
-benchmarks work without network access. See [local development](docs/LOCAL_DEVELOPMENT.md).
+## Local commands
 
 ```sh
-python3 dev.py doctor
-python3 dev.py verify     # build + tests + example round-trips + benchmark work gates
-python3 dev.py sanitize   # a separate local ASan/UBSan build and test run
+node src/cli.mjs check examples/refinements.tt --metrics
+node src/cli.mjs run examples/records.tt
+node src/cli.mjs build examples/higher_order.tt -o program.wasm
+node src/cli.mjs exec program.wasm
+npm test
+npm run verify
 ```
 
+No `npm install` is necessary. Without npm, use `node scripts/verify.mjs`.
+`check` does not emit code; `build` does not execute the program; `run` compiles and
+executes Wasm. The saved `.wasm` runs without TT source. Pure modules have no imports;
+closures, arithmetic, map/fold and aggregate operations execute inside Wasm.
+JavaScript host code only validates, instantiates and decodes the result.
 
-GCC or Clang with C++20 support, CMake 3.20+, and Python 3.9+ are needed to build and
-test. There are no downloaded language/compiler dependencies. The implementation
-uses the GCC/Clang `__int128` extension for checked signed 64-bit arithmetic.
-
-The same steps can be run directly:
-
-```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j2
-ctest --test-dir build --output-on-failure
-
-./build/tt check examples/refinements.tt --metrics
-./build/tt run examples/records.tt
-./build/tt build examples/records.tt -o records.ttbc
-./build/tt exec records.ttbc
-```
+## Language example
 
 ```blot
 const Small = Int where self >= 0 && self < 100;
 const Positive = Int where self > 0;
-
-let increment :: Small -> Positive = fn value => value + 1;
-let getX :: { .x: Small; } -> Small = fn record => record.x;
-
-return increment (getX { .x = 41; .name = "example"; });
+let increment :: Small -> Positive = fn x => x + 1;
+let input :: Small = 41;
+return increment input;
 ```
 
-The record contract admits extra fields. An unannotated `getX` is inferred
-structurally and polymorphically (see `examples/records.tt`), but currently loses
-scalar refinement information; the explicit contract above preserves the bound.
-No per-call body specialization is required. `increment 0` is valid;
-`increment (-1)` is rejected. A false contract such as `Int -> Positive` for
-`value + 1` is rejected, not trusted. Arithmetic overflow traps instead of wrapping.
+This checks and returns `42`; input `100` is rejected with E_REFINEMENT. Function
+contracts concern normal returns, not termination or freedom from runtime traps.
+Unannotated functions infer structural requirements and support let polymorphism:
 
-## Implemented now
-
-- Let-polymorphic functions, closures, currying, higher-order functions, records
-  with inferred row requirements, homogeneous arrays, and lexical shadowing.
-- Structured contracts; canonical integer interval sets with conjunction,
-  disjunction, exclusion, and implication checks; branch-local literal comparison
-  facts; checked function preconditions and postconditions.
-- A conservative higher-order contract discipline that rejects loss of callable
-  preconditions through generic functions, record fields, or arrays.
-- `map`, `fold`, `get`, `length`, `concat`, and `textLength` as the initial primitives.
-- Source checking, bytecode compilation, a versioned artifact reader/validator,
-  and a fuel- and allocation-budgeted VM.
-- Negative tests, independently calculated arithmetic expectations, interval
-  algebra properties, malformed artifacts, sanitizer runs, and scaling workloads.
-
-The present `const` form defines a type alias. Arbitrary compile-time evaluation,
-first-class type values, algebraic effects/handlers, nominal declaration evidence,
-variants, recursion, modules, ownership, incremental compilation, and a native/Wasm
-backend are **not implemented yet**. These are explicit research milestones, not
-features implicitly claimed by the project description.
-
-## Design and evidence
-
-[Design](docs/DESIGN.md) defines the current fragment and its deliberate
-incompleteness. [Syntax](docs/SYNTAX.md) lists the accepted surface.
-[Roadmap](docs/ROADMAP.md) specifies the next experiments.
-[Performance](docs/PERFORMANCE.md) explains benchmark boundaries and provenance.
-
-```sh
-python3 benchmarks/run.py --binary build/tt-bench --output benchmarks/local.json
-cmake -S . -B build-sanitize -DTT_SANITIZE=ON \
-  -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++
-cmake --build build-sanitize --target tt tt-kernel -j2
-ctest --test-dir build-sanitize --output-on-failure
+```text
+let getX = fn value => value.x;
+let a = getX { .x = 42; .name = "point"; };
+let b = getX { .x = true; };
+return { .a = a; .b = b; };
 ```
 
-## Continued exploration
+Refinement evidence also follows simple generic relationships without rechecking the
+function body at each call. Identity, structural projection, record packaging and
+higher-order application can transport a caller's evidence:
 
-Hourly development was requested by the repository owner and scheduled through
-ChatGPT Tasks. Each iteration should read [AGENTS.md](AGENTS.md), inspect the live
-repository, implement a bounded improvement, run it locally, and publish actual
-evidence. CI can corroborate a local result but cannot substitute for one.
-The task is not a GitHub-hosted autonomous agent; availability of future execution
-and repository tools is a dependency. No release or deployment is authorized by
-the development schedule alone.
+```text
+const Positive = Int where self > 0;
+let id = fn x => x;
+let apply = fn f => fn x => f x;
+let answer :: Positive = apply id 42;
+return answer;
+```
+
+Passing a positive-only function through `apply` preserves that precondition; it
+does not broaden the callable to `Int -> Int`. Symbolic arithmetic relations such
+as proving `fn x => x + 1` from an arbitrary caller interval remain future work.
+
+Curried/higher-order functions, captured closures, arrays/map/fold, records,
+conditionals, short-circuit logic and exact signed-i64 arithmetic are implemented.
+Syntax is Blot-inspired, not compatible: semicolons and `do { ... }` are deliberate.
+`const` currently defines type aliases, not arbitrary compile-time programs.
+
+## API
+
+```js
+import { compile, check, execute, run } from './src/compiler.mjs';
+check('return 42;');
+const { wasm } = compile('return 40 + 2;');
+console.log(WebAssembly.validate(wasm)); // true
+console.log(execute(wasm).value);        // 42n
+console.log(run('return 42;').output);   // "42"
+```
+
+A standard engine can instantiate the artifact directly with no imports. The
+provisional ABI exports `main`, `memory` and budget/diagnostic helpers. `main`
+returns a pointer to a tagged value, not directly to a host object. See
+[Wasm ABI](docs/WASM.md). There is no embedded interpreter or required JavaScript
+arithmetic shim. Generic values are boxed and fields use linear lookup: this is a
+simple baseline, not a claim of optimized runtime performance or a stable public ABI.
+
+## Checking and compilation
+
+`syntax.mjs` parses an arena; `types.mjs` performs row unification and let
+polymorphism; `refine.mjs` checks bounded interval sets, branch facts and callable
+contracts. Ordinary generic bodies are not rechecked at every call. `wasm.mjs`
+emits real functions/branches directly; `wasm-runtime.mjs` emits Wasm helpers;
+`wasm-host.mjs` loads modules and decodes their output. No npm dependencies exist.
+
+The local 102-test suite includes 191,751 structural/refinement kernel assertions,
+2,020 i64 boundary/generated arithmetic cases, source/refinement rejections, closure
+capture tests, atomic builds, malformed modules, fuel checks and standalone execution.
+Six obsolete VM kernel checks were removed; Wasm-specific cases replace them rather
+than reusing the old assertion count. Counts are not a soundness proof.
+
+Compile-scaling benchmarks separately record parser/checker/refinement/emitter and
+Wasm-validation phases. Runtime benchmarks separate Module/Instance creation and
+execution. See [performance](docs/PERFORMANCE.md) and [status](docs/STATUS.md).
+
+**Open milestones:** effects, variants, recursion, modules, nominal declaration
+evidence, ownership, general compile-time evaluation, incremental compilation,
+optimized memory management, public host-callable closures and ABI stability.
+Refinement transport is intentionally bounded: direct parameter/projection/application relationships are supported, while general symbolic arithmetic and container primitives remain conservative. A fuel counter/digest is not
+a hostile-code sandbox. Do not run untrusted Wasm in a shared Node process.
+
+Legacy C++ files, when present in the repository, and old Node bytecode evidence
+are historical reference only. Old TTBC artifacts are not supported. See
+[design](docs/DESIGN.md), [syntax](docs/SYNTAX.md), [local workflow](docs/LOCAL_DEVELOPMENT.md),
+[roadmap](docs/ROADMAP.md), and [unchanged production gates](docs/PRODUCTION_READINESS.md).

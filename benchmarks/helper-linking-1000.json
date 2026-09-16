@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "experiment": "demand-driven-wasm-runtime-linking",
+  "boundary": "in-process parse+infer+refine+Wasm binary emission+WebAssembly.validate+type display; phases separately recorded; excludes source generation, startup, engine compilation/instantiation and runtime execution; includes incidental GC, not forced final collection",
+  "claim": "matched 1000-item raw total samples and deterministic artifact work; not a compile-latency speedup claim",
+  "focused": {
+    "literal_before": { "wasm_functions": 41, "wasm_bytes": 2275, "static_bytes": 184 },
+    "literal_after": { "runtime_functions": 5, "wasm_functions": 7, "wasm_bytes": 573, "static_bytes": 88 }
+  },
+  "before": {
+    "recorded_at": "2026-09-16T20:05:48.176Z",
+    "node": "v22.16.0", "v8": "12.4.254.21-node.26",
+    "node_binary_sha256": "8142d37c6f2f372ef040419e7a111a6baf17df89f8078d02447d6c639ae20c1d",
+    "cpu": "Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz", "kernel": "6.18.44",
+    "inputs": { "runtime": "b73730b426cd66b85ebf381e5d34fbf2e12d164b43eaf5faeb9744f2a5ff981f", "emitter": "1505455372ad1955d17ee14759f2b24f782a39c90979d491a845688d8bd99030", "harness": "c8f6a69da965d88511fe4ebda7dfb56dbd71c937d39b891dd06c7e15a7b1c0ad" },
+    "size": 1000, "samples": 11,
+    "workloads": [
+      { "name": "wrappers", "raw_ms": [38.973074,57.040962000000036,40.78083800000013,36.13843199999974,37.44281799999999,38.1990609999998,42.75339699999995,40.40766100000019,37.0481920000002,54.12631899999997,40.94132499999978], "median_ms": 40.40766100000019, "wasm_functions": 1042, "runtime_functions": 39, "wasm_bytes": 67745, "static_bytes": 184 },
+      { "name": "records", "raw_ms": [36.042958,32.38085799999999,31.689372000000276,33.14195699999982,31.506213000000116,33.25049600000011,33.04235800000015,31.827018999999837,41.0912129999997,40.77758799999992,39.14690100000007], "median_ms": 33.14195699999982, "wasm_functions": 41, "runtime_functions": 39, "wasm_bytes": 84332, "static_bytes": 24160 },
+      { "name": "polymorphism", "raw_ms": [108.73949600000014,83.9248679999996,87.79019900000003,79.16685899999993,80.78213000000005,89.9827949999999,80.09199899999976,116.58340399999997,121.88853800000015,108.58580499999971,104.32132499999989], "median_ms": 89.9827949999999, "wasm_functions": 43, "runtime_functions": 39, "wasm_bytes": 119575, "static_bytes": 24160 },
+      { "name": "refinements", "raw_ms": [14.784800999999788,13.405420999999478,11.71904799999993,13.439397999999528,13.81717800000024,17.095596000000114,14.032654999999977,17.999252999999953,15.579131000000416,15.478301000000101,16.75358899999992], "median_ms": 14.784800999999788, "wasm_functions": 42, "runtime_functions": 39, "wasm_bytes": 27491, "static_bytes": 2560 },
+      { "name": "refinement_relations", "raw_ms": [16.872706999999536,15.950880999999754,16.21192400000018,16.46893799999998,17.797672000000603,16.308257000000594,15.41518300000007,19.229873999999654,17.464120999999977,16.438309999999547,15.406465000000026], "median_ms": 16.438309999999547, "wasm_functions": 44, "runtime_functions": 39, "wasm_bytes": 25105, "static_bytes": 184 }
+    ]
+  },
+  "after": {
+    "recorded_at": "2026-09-16T20:08:40.836Z",
+    "node": "v22.16.0", "v8": "12.4.254.21-node.26",
+    "node_binary_sha256": "8142d37c6f2f372ef040419e7a111a6baf17df89f8078d02447d6c639ae20c1d",
+    "cpu": "Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz", "kernel": "6.18.44",
+    "inputs": { "runtime": "3ab86da7f0071ea03f4ca8953fc3c981965bb3a80c95a1d029f9c3e9219922ee", "emitter": "673fbcf1427ae641e5b0accbc220b6564b536208280be9098713628701b72543", "harness": "c8f6a69da965d88511fe4ebda7dfb56dbd71c937d39b891dd06c7e15a7b1c0ad" },
+    "size": 1000, "samples": 11,
+    "workloads": [
+      { "name": "wrappers", "raw_ms": [40.70838599999979,51.78021600000011,55.25209799999993,40.9127239999998,39.27827799999977,60.83230699999967,68.28912700000001,36.510375000000295,36.97062700000015,39.180107000000135,38.29338999999982], "median_ms": 40.70838599999979, "wasm_functions": 1013, "runtime_functions": 10, "wasm_bytes": 66288, "static_bytes": 88 },
+      { "name": "records", "raw_ms": [41.92262200000005,40.438748999999916,35.30645100000038,33.04872800000021,36.73666100000037,40.56816200000003,37.99531500000012,38.91609500000004,33.187742999999955,31.676801999999952,33.677744000000075], "median_ms": 36.73666100000037, "wasm_functions": 12, "runtime_functions": 10, "wasm_bytes": 82948, "static_bytes": 24064 },
+      { "name": "polymorphism", "raw_ms": [124.5032299999998,86.90339700000004,83.12785099999974,91.7837569999997,87.34699099999989,79.4600190000001,86.1220900000003,92.8499609999999,101.21104800000012,106.85790399999996,86.1698150000002], "median_ms": 87.34699099999989, "wasm_functions": 15, "runtime_functions": 11, "wasm_bytes": 118250, "static_bytes": 24064 },
+      { "name": "refinements", "raw_ms": [14.396491999999853,12.67602799999986,12.609770000000026,16.016763999999966,16.181370000000243,16.476767999999538,20.043276000000333,15.616806999999426,12.016519999999218,14.39505999999983,12.797233999999662], "median_ms": 14.396491999999853, "wasm_functions": 16, "runtime_functions": 13, "wasm_bytes": 26195, "static_bytes": 2464 },
+      { "name": "refinement_relations", "raw_ms": [15.17214100000001,17.271098000000165,21.623591000000488,16.9993170000007,16.008230999999796,18.543267999999443,18.221862999999757,14.23934300000019,15.076423000000432,14.398924000000079,14.426746999999523], "median_ms": 16.008230999999796, "wasm_functions": 15, "runtime_functions": 10, "wasm_bytes": 23705, "static_bytes": 88 }
+    ]
+  }
+}

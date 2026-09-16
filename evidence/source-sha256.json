@@ -1,0 +1,20 @@
+{
+  "benchmarks/run.mjs": "c8f6a69da965d88511fe4ebda7dfb56dbd71c937d39b891dd06c7e15a7b1c0ad",
+  "benchmarks/wasm-runtime.mjs": "89c410a2cb512bcf104183dedad293a1b6dfca967b918a23c3e79207ad5cdac5",
+  "package.json": "25c784d8bb191947db46603668010953ad789ad93731545c85f48ab8a93a012f",
+  "scripts/verify.mjs": "9b4848cf96278e0fd4e1c1bf1f5de17b814688b3a864fad2d5733a83ff65769a",
+  "src/cli.mjs": "1c0fadf0ff392c1dce5aab0e974cd4038aabd2d87e3867a5ae8ab03a9afe43df",
+  "src/compiler.mjs": "1db48dd3e6fd6485f09aeaaa1878bb7c219fdaca3ead0024b375cbc0bbcd392c",
+  "src/core.mjs": "61f221c1678e14957e943bda6f48dfcbae7c7e0c9c981cc1c4ce6e73be9759f4",
+  "src/refine.mjs": "3d48dd495a14100dce1dc295dbc28192276445f8938d44a4293ef47360fea29e",
+  "src/syntax.mjs": "060ba0a013a08a003af44b4e704d685b5860f4a646da8a338a9c33aded8be830",
+  "src/types.mjs": "ecf0aafb84ef7b6a18b3e9820d4ff3af087623d090ac672085fa53eda4687d5b",
+  "src/wasm-binary.mjs": "c46089135d8014ed1899cded3f4cb0515c87615f35a06b5af808c55b6da2263d",
+  "src/wasm-host.mjs": "60b43f3db7f73741c93dd6075b8322f097589552c659b15b5a5aed468581202e",
+  "src/wasm-runtime.mjs": "3ab86da7f0071ea03f4ca8953fc3c981965bb3a80c95a1d029f9c3e9219922ee",
+  "src/wasm.mjs": "673fbcf1427ae641e5b0accbc220b6564b536208280be9098713628701b72543",
+  "tests/cli.test.mjs": "218d4e6d710425e2af07e1b61922fb4c6fb6fe22e30211371614cc982ea41c1a",
+  "tests/compiler.test.mjs": "ab99880a83a8df1f25e77aa12193bd655ab8270c1270300af4986d369d4876de",
+  "tests/fixtures.json": "f152f1b75962ce67766304c9ca65946c96b6194e7d2d083d0d9131d1b8d8d665",
+  "tests/wasm.test.mjs": "61d19e1c7c4d47759e61f56ab600acfedca0215637bf758cb8ccfb3c1ddeb6b8"
+}

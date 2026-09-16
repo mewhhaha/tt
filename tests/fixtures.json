@@ -1,0 +1,452 @@
+[
+  {
+    "name": "test_array_heterogeneity_rejected",
+    "source": "return [1,true];",
+    "outcome": "reject",
+    "code": "E_TYPE"
+  },
+  {
+    "name": "test_array_refinement",
+    "source": "const Pos = Int where self > 0; let xs :: [Pos]=[1,2,3]; return length xs;",
+    "outcome": "accept",
+    "output": "3"
+  },
+  {
+    "name": "test_array_refinement",
+    "source": "const Pos = Int where self > 0; let xs :: [Pos]=[]; return length xs;",
+    "outcome": "accept",
+    "output": "0"
+  },
+  {
+    "name": "test_array_refinement",
+    "source": "const Pos = Int where self > 0; let xs :: [Pos]=[1,0]; return xs;",
+    "outcome": "reject",
+    "code": "E_REFINEMENT"
+  },
+  {
+    "name": "test_arrays_map_fold",
+    "source": "let xs=map (fn x => x*2) [1,2,3]; return fold (fn a => fn b => a+b) 0 xs;",
+    "outcome": "accept",
+    "output": "12"
+  },
+  {
+    "name": "test_branch_facts_do_not_leak",
+    "source": "const Pos = Int where self > 0; let f=fn x => do { let ignored=if x > 0 then x else 1; let y :: Pos=x; return y; }; return f;",
+    "outcome": "reject",
+    "code": "E_REFINEMENT"
+  },
+  {
+    "name": "test_branch_refinement_true_false",
+    "source": "const Pos = Int where self > 0; let f=fn x => if x > 0 then do { let y :: Pos=x; return y; } else 0; return f 42;",
+    "outcome": "accept",
+    "output": "42"
+  },
+  {
+    "name": "test_branch_refinement_true_false",
+    "source": "const Pos = Int where self > 0; let f=fn x => if x <= 0 then 1 else do { let y :: Pos=x; return y; }; return f 42;",
+    "outcome": "accept",
+    "output": "42"
+  },
+  {
+    "name": "test_branch_refinement_true_false",
+    "source": "const Pos = Int where self > 0; let f=fn x => if x > 0 then 1 else do { let y :: Pos=x; return y; }; return f;",
+    "outcome": "reject",
+    "code": "E_REFINEMENT"
+  },
+  {
+    "name": "test_callable_contravariance",
+    "source": "const Pos = Int where self > 0; let broad :: Int -> Int=fn x=>x; let narrow :: Pos -> Int=broad; return narrow 42;",
+    "outcome": "accept",
+    "output": "42"
+  },
+  {
+    "name": "test_callable_join_does_not_erase",
+    "source": "const Pos = Int where self > 0; let choose=fn flag => if flag then (fn (x :: Pos) => x) else (fn x => x); return choose;",
+    "outcome": "reject",
+    "code": "E_REFINEMENT_JOIN"
+  },
+  {
+    "name": "test_callable_preconditions_not_erased",
+    "source": "const Pos = Int where self > 0; let narrow :: Pos -> Int = fn x => x; let broad :: Int -> Int=narrow; return broad 0;",
+    "outcome": "reject",
+    "code": "E_REFINEMENT"
+  },
+  {
+    "name": "test_callable_preconditions_not_erased",
+    "source": "const Pos = Int where self > 0; let narrow :: Pos -> Int = fn x => x; let id=fn x=>x; let broad=id narrow; return broad 0;",
+    "outcome": "reject",
+    "code": "E_REFINEMENT"
+  },
+  {
+    "name": "test_callable_preconditions_not_erased",
+    "source": "const Pos = Int where self > 0; let narrow :: Pos -> Int = fn x => x; let apply=fn f=>f 0; return apply narrow;",
+    "outcome": "reject",
+    "code": "E_REFINEMENT"
+  },
+  {
+    "name": "test_callable_preconditions_not_erased",
+    "source": "const Pos = Int where self > 0; let narrow :: Pos -> Int = fn x => x; let id=fn x=>x; let r=id { .f=narrow; }; return r.f 0;",
+    "outcome": "reject",
+    "code": "E_REFINEMENT"
+  },
+  {
+    "name": "test_callable_preconditions_not_erased",
+    "source": "const Pos = Int where self > 0; let narrow :: Pos -> Int = fn x => x; return get [narrow] 0 0;",
+    "outcome": "reject",
+    "code": "E_REFINEMENT"
+  },
+  {
+    "name": "test_callable_preconditions_not_erased",
+    "source": "const Pos = Int where self > 0; let narrow :: Pos -> Int = fn x => x; return map narrow [0];",
+    "outcome": "reject",
+    "code": "E_REFINEMENT"
+  },
+  {
+    "name": "test_closure_capture",
+    "source": "let make = fn n => fn x => n+x; let a=make 10; let b=make 20; return a 1 + b 2;",
+    "outcome": "accept",
+    "output": "33"
+  },
+  {
+    "name": "test_combined_field_requirements",
+    "source": "let sum = fn r => r.x+r.y; return sum { .z=true; .y=2; .x=40; };",
+    "outcome": "accept",
+    "output": "42"
+  },
+  {
+    "name": "test_combined_field_requirements",
+    "source": "let sum = fn r => r.x+r.y; return sum { .x=1; };",
+    "outcome": "reject",
+    "code": "E_TYPE"
+  },
+  {
+    "name": "test_empty_array_polymorphism",
+    "source": "let xs=[]; let a=map (fn x => x+1) xs; let b=map (fn x => !x) xs; return length a + length b;",
+    "outcome": "accept",
+    "output": "0"
+  },
+  {
+    "name": "test_explicit_higher_order_contract",
+    "source": "const Pos = Int where self > 0; let call :: (Pos -> Int) -> Int = fn f => f 42; let narrow :: Pos -> Int=fn x=>x; return call narrow;",
+    "outcome": "accept",
+    "output": "42"
+  },
+  {
+    "name": "test_explicit_unsupported_type_logic",
+    "source": "const X=Int | Text; return 0;",
+    "outcome": "reject",
+    "code": "E_UNSUPPORTED"
+  },
+  {
+    "name": "test_higher_order_composition",
+    "source": "let compose=fn f => fn g => fn x => f (g x); let inc=fn x => x+1; return compose inc inc 40;",
+    "outcome": "accept",
+    "output": "42"
+  },
+  {
+    "name": "test_i64_remainder_boundary",
+    "source": "return -9223372036854775808 % (-1);",
+    "outcome": "accept",
+    "output": "0"
+  },
+  {
+    "name": "test_inferred_constant_postcondition",
+    "source": "const Pos = Int where self > 0; let f=fn x=>1; let result :: Pos=f (); return result;",
+    "outcome": "accept",
+    "output": "1"
+  },
+  {
+    "name": "test_infinite_type",
+    "source": "return fn x => x x;",
+    "outcome": "reject",
+    "code": "E_TYPE"
+  },
+  {
+    "name": "test_let_generalization_does_not_generalize_captures",
+    "source": "let bad = fn x => do { let y = x; let a = y 1; return y true; }; return bad;",
+    "outcome": "reject",
+    "code": "E_TYPE"
+  },
+  {
+    "name": "test_monomorphic_parameter",
+    "source": "let bad = fn f => { .a=f 1; .b=f true; }; return bad;",
+    "outcome": "reject",
+    "code": "E_TYPE"
+  },
+  {
+    "name": "test_native_currying_and_text",
+    "source": "let hi=concat \"hello \"; return hi \"world\";",
+    "outcome": "accept",
+    "output": "\"hello world\""
+  },
+  {
+    "name": "test_native_currying_and_text",
+    "source": "return textLength \"abc\";",
+    "outcome": "accept",
+    "output": "3"
+  },
+  {
+    "name": "test_nested_local_closure",
+    "source": "let make=fn x => do { let y=x+1; return fn z => y+z; }; return make 40 1;",
+    "outcome": "accept",
+    "output": "42"
+  },
+  {
+    "name": "test_nested_record_projection",
+    "source": "let f = fn r => r.a.b; return f { .a={ .b=42; .c=false; }; };",
+    "outcome": "accept",
+    "output": "42"
+  },
+  {
+    "name": "test_nonzero_disjunction",
+    "source": "const NZ=Int where self != 0; let f :: NZ -> Int = fn x => 42/x; return f (-2);",
+    "outcome": "accept",
+    "output": "-21"
+  },
+  {
+    "name": "test_nonzero_disjunction",
+    "source": "const NZ=Int where self != 0; let x :: NZ=0; return x;",
+    "outcome": "reject",
+    "code": "E_REFINEMENT"
+  },
+  {
+    "name": "test_parameter_annotation",
+    "source": "const Pos = Int where self > 0; let f=fn (x :: Pos) => x; return f 42;",
+    "outcome": "accept",
+    "output": "42"
+  },
+  {
+    "name": "test_parameter_annotation",
+    "source": "const Pos = Int where self > 0; let f=fn (x :: Pos) => x; return f 0;",
+    "outcome": "reject",
+    "code": "E_REFINEMENT"
+  },
+  {
+    "name": "test_polymorphic_identity",
+    "source": "let id = fn x => x; let a = id 42; let b = id true; return { .a=a; .b=b; };",
+    "outcome": "accept",
+    "output": "{ .a = 42; .b = true; }"
+  },
+  {
+    "name": "test_precedence",
+    "source": "return 2 + 3 * 4 - 5;",
+    "outcome": "accept",
+    "output": "9"
+  },
+  {
+    "name": "test_precedence",
+    "source": "let f = fn x => x + 1; return f 3 * 2;",
+    "outcome": "accept",
+    "output": "8"
+  },
+  {
+    "name": "test_primitives",
+    "source": "return 42;",
+    "outcome": "accept",
+    "output": "42"
+  },
+  {
+    "name": "test_primitives",
+    "source": "return true;",
+    "outcome": "accept",
+    "output": "true"
+  },
+  {
+    "name": "test_primitives",
+    "source": "return ();",
+    "outcome": "accept",
+    "output": "()"
+  },
+  {
+    "name": "test_primitives",
+    "source": "return \"a\\n\\\"b\";",
+    "outcome": "accept",
+    "output": "\"a\\n\\\"b\""
+  },
+  {
+    "name": "test_primitives",
+    "source": "return -9223372036854775808;",
+    "outcome": "accept",
+    "output": "-9223372036854775808"
+  },
+  {
+    "name": "test_readme_program",
+    "source": "const Small = Int where self >= 0 && self < 100;\nconst Positive = Int where self > 0;\n\nlet increment :: Small -> Positive = fn value => value + 1;\nlet getX :: { .x: Small; } -> Small = fn record => record.x;\n\nreturn increment (getX { .x = 41; .name = \"example\"; });\n",
+    "outcome": "accept",
+    "output": "42"
+  },
+  {
+    "name": "test_record_order_independent",
+    "source": "let f = fn x => if true then { .a=x; .b=2; } else { .b=3; .a=x; }; return (f 40).a;",
+    "outcome": "accept",
+    "output": "40"
+  },
+  {
+    "name": "test_record_refinement",
+    "source": "const Pos = Int where self > 0; const R={ .x: Pos; }; let r :: R={ .x=42; .name=\"a\"; }; return r.x;",
+    "outcome": "accept",
+    "output": "42"
+  },
+  {
+    "name": "test_record_refinement",
+    "source": "const Pos = Int where self > 0; const R={ .x: Pos; }; let r :: R={ .x=0; }; return r;",
+    "outcome": "reject",
+    "code": "E_REFINEMENT"
+  },
+  {
+    "name": "test_refined_call",
+    "source": "const Pos = Int where self > 0; let f :: Pos -> Int = fn x => x; return f 0;",
+    "outcome": "reject",
+    "code": "E_REFINEMENT"
+  },
+  {
+    "name": "test_refined_function",
+    "source": "const Pos = Int where self > 0; const Small=Int where self >= 0 && self < 100; let inc :: Small -> Pos = fn x => x+1; return inc 41;",
+    "outcome": "accept",
+    "output": "42"
+  },
+  {
+    "name": "test_refined_function",
+    "source": "const Pos = Int where self > 0; let inc :: Int -> Pos = fn x => x+1; return inc;",
+    "outcome": "reject",
+    "code": "E_REFINEMENT"
+  },
+  {
+    "name": "test_refinement_good_bad",
+    "source": "const Pos = Int where self > 0; let x :: Pos = 42; return x;",
+    "outcome": "accept",
+    "output": "42"
+  },
+  {
+    "name": "test_refinement_good_bad",
+    "source": "const Pos = Int where self > 0; let x :: Pos = 0; return x;",
+    "outcome": "reject",
+    "code": "E_REFINEMENT"
+  },
+  {
+    "name": "test_refinement_overflow_does_not_wrap",
+    "source": "const Pos = Int where self > 0; let x :: Pos=9223372036854775807+1; return x;",
+    "outcome": "reject",
+    "code": "E_REFINEMENT"
+  },
+  {
+    "name": "test_repository_examples",
+    "source": "const Small = Int where self >= 0 && self < 100;\nconst Positive = Int where self > 0;\n\nlet increment :: Small -> Positive = fn value => value + 1;\n// The explicit contract preserves the scalar bound across this call.\nlet getX :: { .x: Small; } -> Small = fn record => record.x;\nreturn increment (getX { .x = 41; .name = \"example\"; });\n",
+    "outcome": "accept",
+    "output": "42"
+  },
+  {
+    "name": "test_repository_examples",
+    "source": "let compose = fn f => fn g => fn value => f (g value);\nlet increment = fn value => value + 1;\nlet twice = compose increment increment;\nlet values = map twice [1, 2, 3];\nreturn fold (fn total => fn value => total + value) 0 values;\n",
+    "outcome": "accept",
+    "output": "12"
+  },
+  {
+    "name": "test_repository_examples",
+    "source": "const Positive = Int where self > 0;\nlet keepPositive :: Int -> Int = fn value =>\n    if value > 0 then do {\n        let checked :: Positive = value;\n        return checked;\n    } else 0;\nreturn map keepPositive [-2, 0, 42];\n",
+    "outcome": "accept",
+    "output": "[0, 0, 42]"
+  },
+  {
+    "name": "test_repository_examples",
+    "source": "let getX = fn record => record.x;\nlet move = fn delta => fn entity => {\n    .position = getX entity + delta;\n    .name = entity.name;\n};\nlet entities = [\n    { .x = 10; .name = \"first\"; },\n    { .x = 20; .name = \"second\"; }\n];\nreturn map (move 3) entities;\n",
+    "outcome": "accept",
+    "output": "[{ .position = 13; .name = \"first\"; }, { .position = 23; .name = \"second\"; }]"
+  },
+  {
+    "name": "test_row_polymorphism",
+    "source": "let getX = fn r => r.x; let a=getX { .x=42; .y=true; }; let b=getX { .x=false; }; return { .a=a; .b=b; };",
+    "outcome": "accept",
+    "output": "{ .a = 42; .b = false; }"
+  },
+  {
+    "name": "test_shadowing_preserves_lexical_binding",
+    "source": "let x=10; let f=fn ignored => x; let x=20; return f () + x;",
+    "outcome": "accept",
+    "output": "30"
+  },
+  {
+    "name": "test_short_circuit_refinement",
+    "source": "const Pos = Int where self > 0; let valid :: Pos -> Bool = fn x => true; let f=fn x => x > 0 && valid x; return f 0;",
+    "outcome": "accept",
+    "output": "false"
+  },
+  {
+    "name": "test_short_circuit_refinement",
+    "source": "const NZ=Int where self != 0; let f :: NZ -> Bool=fn x=>true; let g=fn x=>x==0 || f x; return g 0;",
+    "outcome": "accept",
+    "output": "true"
+  },
+  {
+    "name": "test_short_circuit_runtime",
+    "source": "return false && (1/0==1);",
+    "outcome": "accept",
+    "output": "false"
+  },
+  {
+    "name": "test_short_circuit_runtime",
+    "source": "return true || (1/0==1);",
+    "outcome": "accept",
+    "output": "true"
+  },
+  {
+    "name": "test_syntax_rejections",
+    "source": "return 9223372036854775808;",
+    "outcome": "reject",
+    "code": "E_PARSE"
+  },
+  {
+    "name": "test_syntax_rejections",
+    "source": "return -9223372036854775809;",
+    "outcome": "reject",
+    "code": "E_PARSE"
+  },
+  {
+    "name": "test_syntax_rejections",
+    "source": "return \"bad\\z\";",
+    "outcome": "reject",
+    "code": "E_PARSE"
+  },
+  {
+    "name": "test_syntax_rejections",
+    "source": "return { .x=1; .x=2; };",
+    "outcome": "reject",
+    "code": "E_PARSE"
+  },
+  {
+    "name": "test_syntax_rejections",
+    "source": "return \"unfinished;",
+    "outcome": "reject",
+    "code": "E_PARSE"
+  },
+  {
+    "name": "test_syntax_rejections",
+    "source": "let x = 1 return x;",
+    "outcome": "reject",
+    "code": "E_PARSE"
+  },
+  {
+    "name": "test_type_union_and_intersection",
+    "source": "const A=Int where self >= 0 && self <= 10; const B=Int where self >= 5 && self <= 20; const C=A & B; let x :: C=7; return x;",
+    "outcome": "accept",
+    "output": "7"
+  },
+  {
+    "name": "test_type_union_and_intersection",
+    "source": "const A=Int where self == 1; const B=Int where self == 3; const C=A | B; let x :: C=2; return x;",
+    "outcome": "reject",
+    "code": "E_REFINEMENT"
+  },
+  {
+    "name": "test_unknown_name",
+    "source": "return missing;",
+    "outcome": "reject",
+    "code": "E_NAME"
+  },
+  {
+    "name": "test_unreachable_refinement",
+    "source": "const Pos = Int where self > 0; let f=fn x => if x > 0 && x <= 0 then do { let impossible :: Pos=-1; return impossible; } else 42; return f 0;",
+    "outcome": "accept",
+    "output": "42"
+  }
+]

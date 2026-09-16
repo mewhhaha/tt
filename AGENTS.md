@@ -1,65 +1,60 @@
 # Working on TT
 
-The owner authorized direct commits to main and ongoing hourly exploration of a
-fast refinement-first structural language. Preserve concurrent changes. Never
-force-push. Do not change other repositories, publish packages, or deploy services
-without separate authorization.
+The owner authorizes direct commits to mewhhaha/tt main and hourly exploration of a
+fast refinement-first structural language. Preserve concurrent changes and never
+force-push. Publishing packages, deploying, editing permissions, and modifying
+other repositories are not authorized.
 
-Read docs/STATUS.md, docs/DESIGN.md, docs/ROADMAP.md, docs/PRODUCTION_READINESS.md,
-docs/LOCAL_DEVELOPMENT.md, and recent commits before choosing an iteration. The existing compiler is a
-prototype and not a soundness proof. Keep the implementation language a pragmatic
-choice, not a semantic commitment.
+## Current implementation and local execution
 
-## Required iteration discipline
+The owner explicitly selected **Node.js** on 2026-09-16. The active execution path of this
+prototype is JavaScript ES modules in src/*.mjs, not the retained reference C++ implementation.
+Keep it locally runnable with Node alone. **WebAssembly is the ONLY output target.**
+`run` compiles and executes real Wasm; no TT bytecode VM, JavaScript output, or native
+code target is allowed. The host only loads Wasm and decodes results, never interprets
+TT. No interpreter embedded inside Wasm may substitute for direct compilation. No CI artifact, native compiler, hosted
+checker, or install step may be a prerequisite. There are no npm dependencies.
 
-1. Choose a bounded, meaningful improvement. State a falsifiable hypothesis when
-   changing inference, refinement semantics, or performance-sensitive algorithms.
-2. Add regression tests first where practical. Run acceptance, rejection, runtime,
-   artifact, and relevant adversarial tests. Use ASan/UBSan for memory-sensitive work.
-3. For performance changes, capture matched workload/toolchain/source provenance,
-   retain raw samples, and count work. Do not claim speedups from incomparable runs.
-4. Update docs/STATUS.md and append an iteration entry with commands, real outcomes,
-   known failures, and next work. Never invent test results or mark an unrun check as
-   passed. A limit diagnostic is not evidence that a source program is ill-typed.
-5. Push only a coherent state. Inspect current main before updating it; preserve
-   other edits. Report the exact commit and remaining blockers.
+Read docs/STATUS.md, docs/DESIGN.md, docs/ROADMAP.md, docs/LOCAL_DEVELOPMENT.md,
+docs/PRODUCTION_READINESS.md and recent commits before choosing work. Inspect live
+main; do not assume a previous temporary workspace or checkpoint is current.
 
-## Architectural guardrails
+Run locally:
 
-- Type predicates are structured descriptions, not arbitrary Boolean closures
-  invoked against unknown values. Richer inference must have a specified logic.
-- Preserve the distinction between shape evidence, value refinements, effects,
-  ownership, staging, nominal identities, and runtime layouts. A unified surface
-  does not justify conflating these judgments.
-- Function inputs are contravariant. Never erase a callable's precondition through
-  polymorphism, an alias, a record, an array, a join, or an interface boundary.
-- Branch facts are scoped to immutable binding identities. No optimistic proof on
-  a timeout, unsupported predicate, or exhausted budget.
-- Check source bodies compositionally. Avoid call-site body rechecking masquerading
-  as ordinary generic inference. Make generation/specialization explicit.
-- Effects and ECS owners will need stable declaration evidence containing real
-  providers/seeds. Do not substitute storage shapes, inferred names, or accidental
-  physical closure captures for that evidence.
-- No unchecked wraparound, out-of-bounds access, or silently changed demand order.
-- Do not turn a known wrong result into the expected test output.
+    npm test
+    npm run verify
+    npm run bench -- --sizes 500,1000,2000 --samples 11
 
-## Commands
+The direct equivalent of verify is node scripts/verify.mjs. CI is optional
+corroboration, never a substitute for a claimed local run. Report missing execution
+or repository access honestly. JavaScript tests are not ASan/UBSan evidence.
 
-python3 dev.py doctor
-python3 dev.py verify
-python3 dev.py sanitize
+## Iteration discipline
 
-LOCAL EXECUTION IS REQUIRED by the owner. Build and run the compiler in the
-current execution environment; never depend on a CI artifact or hosted checker.
-The commands above perform no downloads. CI, if configured later, must run these
-same commands and is corroboration only. When local tooling is unavailable, report
-the blocker; do not claim CI checks were local execution. Verify an empty build
-directory when changing the build system. Separate compiler-build time from the
-time the resulting TT compiler spends checking/compiling a TT program.
+Choose a bounded useful improvement and a falsifiable hypothesis. Add acceptance,
+rejection, runtime and adversarial tests; run relevant work/performance regressions.
+Record exact commands, counts, failures, source/runtime provenance, and next work in
+docs/STATUS.md and docs/ITERATIONS.md. Never fabricate tests or reuse stale hashes.
+Benchmark startup, checking, emitting, Wasm engine compilation/instantiation/execution, and incidental GC as distinct
+boundaries. RSS snapshots are not peak memory. Do not infer asymptotic guarantees
+from one median. Reread main before publication and push one coherent state.
 
-## Completion
+## Architectural constraints
 
-Do not call this production-ready until the explicit readiness gates have actual
-recorded evidence. Do not shrink the gates to finish the task. Once all gates are
-satisfied, report the evidence and disable the hourly task. If blocked, record the
-blocker; do not claim asynchronous work or changes that were not performed.
+Structured type predicates are not arbitrary Boolean callbacks run on unknowns.
+Keep shape, refinement, effects, ownership, phase, identity, and layout judgments
+separate even when their surface is uniform. Check ordinary functions compositionally.
+Do not recheck source bodies at every generic call. Do not erase callable input
+preconditions through polymorphism, records, arrays, joins, aliases or annotations.
+Function inputs are contravariant. Branch evidence belongs to immutable binder IDs.
+Unsupported or exhausted proof attempts never justify acceptance. Preserve strict
+left-to-right demand, checked i64 overflow, and bounds checks. Keep TT names in Maps,
+not host object prototypes; malformed artifacts must fail deliberately.
+
+Future ECS inference needs real declaration-owned seeds/providers, not storage-type
+guesses or accidental closure capture graphs. No native or host authority may be
+forged through structural records or reflection.
+
+Do not call the compiler production-ready until every documented gate has evidence.
+Do not shrink the gates to finish. Once genuinely complete, report the evidence and
+disable the hourly task. Until then, keep implemented semantics distinct from plans.

@@ -6,14 +6,16 @@ Each item requires executable acceptance and rejection cases plus cost evidence.
 ## Next iterations
 
 1. **Adversarial validation and maintainability.** Expand generated tests for
-   polymorphic rows and nested callable contracts; audit bytecode/resource limits,
+   polymorphic rows and nested callable contracts; audit Wasm ABI/resource limits,
    error recovery, and lifetime behavior. Improve source formatting and module
    boundaries without adding another semantic implementation. Record any discovered
    counterexample before repairing it.
-2. **Refinement abstraction.** Compact parameter/result qualifiers for generic
-   functions; preserve useful scalar evidence through identity/composition and
-   container operations without body specialization. Establish substitution and
-   variance tests. Avoid arbitrary theorem proving or hidden call-site retries.
+2. **Refinement abstraction.** Compact parameter/result evidence templates now
+   preserve identity, structural projection/packaging, and higher-order application
+   without body specialization, with substitution/variance regressions and work
+   counters. Next add deliberately bounded symbolic arithmetic and selected
+   container summaries; keep unsupported dependency shapes fail-closed. Avoid
+   arbitrary theorem proving or hidden call-site retries.
 3. **Variants and ordinary recursion.** Closed/open variant requirements,
    construction and matching, fail-closed coverage, recursive-group inference,
    explicit recursive datatype boundaries, and tail calls. Clarify termination vs
@@ -34,8 +36,9 @@ Each item requires executable acceptance and rejection cases plus cost evidence.
 
 - Modules and separate checking; first-class interface evidence; incremental
   invalidation separating interface users from static implementation users.
-- A supported native/Wasm code-generation path, or an explicitly agreed VM target
-  with measured runtime behavior and a stable artifact contract.
+- WebAssembly is the sole output target. Extend and audit the direct Wasm backend,
+  memory management, public callable ABI, traps and runtime performance. Do not
+  introduce a native/JavaScript/TTBC target or replace compilation with interpretation.
 - Resource/ownership analysis and a documented policy for continuations, arrays,
   cleanup, and abstraction boundaries.
 - Independent differential evaluator/model, stronger generated/property tests,

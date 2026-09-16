@@ -1,0 +1,133 @@
+/** Direct AST -> Wasm. Source lambdas become functions; calls use a Wasm table. */
+import { createHash } from 'node:crypto';
+import { NONE, LIMITS, fail, enter } from './core.mjs';
+import { WasmModule, Bytes, I32, I64, uleb } from './wasm-binary.mjs';
+import { installRuntime, NativeEntry, Tag, G } from './wasm-runtime.mjs';
+const binary = new Map([['+', 'add'], ['-', 'sub'], ['*', 'mul'], ['/', 'div'], ['%', 'mod'],
+  ['==', 'eq'], ['!=', 'ne'], ['<', 'lt'], ['<=', 'le'], ['>', 'gt'], ['>=', 'ge']]);
+class StaticData {
+  chunks = [Buffer.alloc(16)]; size = 16; values = new Map();
+  add(key, tag, count = 0, aux = 0, payload = Buffer.alloc(0)) {
+    if (this.values.has(key)) return this.values.get(key);
+    const p = this.size, size = Math.ceil((16 + payload.length) / 8) * 8, bytes = Buffer.alloc(size);
+    bytes.writeInt32LE(tag, 0); bytes.writeUInt32LE(count, 4); bytes.writeUInt32LE(aux, 8); payload.copy(bytes, 16);
+    this.size += size; if (this.size > 32 * 1024 * 1024) fail(0, 'static data size limit exceeded', 'E_LIMIT');
+    this.chunks.push(bytes); this.values.set(key, p); return p;
+  }
+  integer(value) { const b = Buffer.alloc(8); b.writeBigInt64LE(value); return this.add('int:' + value, Tag.Int, 0, 0, b); }
+  text(value) { const b = Buffer.from(value); return this.add('text:' + value, Tag.Text, b.length, 0, b); }
+  finish() { return Buffer.concat(this.chunks); }
+}
+export class WasmEmit {
+  depth = 0; serial = 0; sourceNodes = 0;
+  constructor(ast, inference) {
+    this.ast = ast; this.data = new StaticData(); this.m = new WasmModule();
+    this.constants = { unit: this.data.add('unit', Tag.Unit), false: this.data.add('false', Tag.Bool), true: this.data.add('true', Tag.Bool, 0, 1) };
+    const byBinder = new Map(inference.builtins.map(b => [b.binder, b]));
+    const used = new Set(this.ast.nodes.filter(e => e.kind === 'Var' && byBinder.has(e.binder)).map(e => e.binder));
+    const roots = this.runtimeRoots();
+    for (const binder of used) roots.add(NativeEntry[byBinder.get(binder).name]);
+    const targets = installRuntime(this.m, this.constants, roots); this.runtimeFunctions = targets.size;
+    this.natives = new Map([...used].map(binder => {
+      const b = byBinder.get(binder), target = targets.get(NativeEntry[b.name]);
+      if (target === undefined) fail(0, 'missing demanded native runtime entry', 'E_INTERNAL');
+      return [binder, this.data.add('native:' + b.name, Tag.Closure, 0, target)];
+    }));
+  }
+  runtimeRoots() {
+    const roots = new Set(['tick', 'set_fuel', 'error_code', 'fuel_remaining']);
+    for (const e of this.ast.nodes) {
+      if (e.kind === 'Lambda' || e.kind === 'Record' || e.kind === 'Array') { roots.add('object'); roots.add('put'); }
+      if (e.kind === 'Call') roots.add('invoke');
+      if (e.kind === 'Field') roots.add('field');
+      if (e.kind === 'Unary') roots.add(e.text === '-' ? 'neg' : 'not');
+      if (e.kind === 'Binary') roots.add(e.text === '&&' || e.text === '||' ? 'boolean' : binary.get(e.text));
+      if (e.kind === 'If') roots.add('boolean');
+    }
+    return roots;
+  }
+  free(id, bound, out) {
+    const e = this.ast.nodes[id]; enter(this, e.pos);
+    try {
+      if (e.kind === 'Var') { if (!bound.has(e.binder) && !this.natives.has(e.binder)) out.add(e.binder); return; }
+      if (e.kind === 'Lambda') { bound.add(e.binder); this.free(e.a, bound, out); bound.delete(e.binder); return; }
+      if (e.kind === 'Block') { for (const b of e.bindings) { this.free(b.expr, bound, out); bound.add(b.binder); }
+        this.free(e.a, bound, out); for (const b of e.bindings) bound.delete(b.binder); return; }
+      for (const child of [e.a, e.b, e.c]) if (child !== NONE) this.free(child, bound, out);
+      for (const child of e.items) this.free(child, bound, out);
+      for (const [, child] of e.fields) this.free(child, bound, out);
+    } finally { this.depth--; }
+  }
+  load(binder, f, scope) {
+    if (this.natives.has(binder)) { f.i32(this.natives.get(binder)); return; }
+    const loc = scope.get(binder); if (!loc) fail(0, 'unresolved closure binding', 'E_INTERNAL');
+    if (loc.capture) f.get(0).load(16 + loc.index * 4); else f.get(loc.index);
+  }
+  object(f, tag, count, bytes) { f.i32(bytes).i32(tag).i32(count).call('object'); }
+  expression(id, f, scope) {
+    const e = this.ast.nodes[id]; enter(this, e.pos); this.sourceNodes++;
+    try {
+      f.call('tick');
+      switch (e.kind) {
+        case 'Int': f.i32(this.data.integer(e.number)); break;
+        case 'Bool': f.i32(e.number ? this.constants.true : this.constants.false); break;
+        case 'Unit': f.i32(this.constants.unit); break;
+        case 'Text': f.i32(this.data.text(e.text)); break;
+        case 'Var': this.load(e.binder, f, scope); break;
+        case 'Lambda': {
+          const captures = new Set(); this.free(e.a, new Set([e.binder]), captures);
+          const ordered = [...captures].sort((a, b) => a - b), child = this.m.func('lambda:' + this.serial++, [I32, I32]);
+          const inner = new Map([[e.binder, { capture: false, index: 1 }]]);
+          ordered.forEach((cap, i) => inner.set(cap, { capture: true, index: i }));
+          this.expression(e.a, child, inner);
+          const p = f.local(); this.object(f, Tag.Closure, ordered.length, 16 + 4 * ordered.length); f.set(p);
+          f.get(p).i32(child.index).store(8);
+          ordered.forEach((cap, i) => { f.get(p).i32(16 + 4 * i); this.load(cap, f, scope); f.call('put'); });
+          f.get(p); break;
+        }
+        case 'Call': this.expression(e.a, f, scope); this.expression(e.b, f, scope); f.call('invoke'); break;
+        case 'Record': case 'Array': {
+          const fields = e.kind === 'Record' ? e.fields : e.items.map((x, i) => [i, x]);
+          // Evaluate every element left-to-right before constructing the aggregate.
+          const values = fields.map(([, x]) => { this.expression(x, f, scope); const local = f.local(); f.set(local); return local; });
+          const record = e.kind === 'Record', width = record ? 8 : 4, p = f.local();
+          this.object(f, record ? Tag.Record : Tag.Array, fields.length, 16 + width * fields.length); f.set(p);
+          fields.forEach(([label], i) => {
+            if (record) f.get(p).i32(label).store(16 + 8 * i);
+            f.get(p).i32(16 + width * i + (record ? 4 : 0)).get(values[i]).call('put');
+          }); f.get(p); break;
+        }
+        case 'Field': this.expression(e.a, f, scope); f.i32(e.name).call('field'); break;
+        case 'Unary': this.expression(e.a, f, scope); f.call(e.text === '-' ? 'neg' : 'not'); break;
+        case 'Binary': {
+          this.expression(e.a, f, scope);
+          if (e.text === '&&' || e.text === '||') {
+            f.call('boolean').if(I32);
+            if (e.text === '&&') this.expression(e.b, f, scope); else f.i32(this.constants.true);
+            f.else(); if (e.text === '&&') f.i32(this.constants.false); else this.expression(e.b, f, scope); f.end();
+          } else { this.expression(e.b, f, scope); f.call(binary.get(e.text)); } break;
+        }
+        case 'If': this.expression(e.a, f, scope); f.call('boolean').if(I32); this.expression(e.b, f, scope);
+          f.else(); this.expression(e.c, f, scope); f.end(); break;
+        case 'Block':
+          for (const b of e.bindings) { this.expression(b.expr, f, scope); const local = f.local(); f.set(local); scope.set(b.binder, { capture: false, index: local }); }
+          this.expression(e.a, f, scope); break;
+        default: fail(e.pos, 'unsupported Wasm expression ' + e.kind, 'E_INTERNAL');
+      }
+    } finally { this.depth--; }
+  }
+  run() {
+    const entry = this.m.func('entry'); this.expression(this.ast.root, entry, new Map());
+    const heap = this.data.size, main = this.m.func('main');
+    main.i32(heap).gset(G.heap).i32(0).gset(G.error).i32(0).gset(G.depth).gget(G.limit).gset(G.fuel).call('entry');
+    for (const name of ['main', 'set_fuel', 'error_code', 'fuel_remaining']) this.m.export(name, 0, this.m.functionId(name));
+    this.m.export('memory', 2, 0);
+    const core = this.m.finish(this.data.finish(), heap, [[I32, heap], [I32, 0], [I64, 10_000_000], [I64, 10_000_000], [I32, 0]]);
+    const abi = { schema: 'tt-wasm-abi', version: 1, labels: this.ast.symbols.names, heap_start: heap,
+      core_bytes: core.length, core_sha256: createHash('sha256').update(core).digest('hex') };
+    const custom = new Bytes().name('tt.abi').add(Buffer.from(JSON.stringify(abi))).finish();
+    const wasm = Buffer.concat([core, Buffer.from([0, ...uleb(custom.length)]), custom]);
+    if (wasm.length > LIMITS.artifactBytes) fail(0, 'Wasm artifact size limit exceeded', 'E_LIMIT');
+    return { wasm, runtime_functions: this.runtimeFunctions, wasm_functions: this.m.functions.length, wasm_bytes: wasm.length, static_bytes: heap, emitted_expressions: this.sourceNodes };
+  }
+}

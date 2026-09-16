@@ -1,0 +1,22 @@
+{
+  "name": "tt-compiler",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Dependency-free Node.js compiler for a refinement-first language; WebAssembly is the only output target",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "tt": "./src/cli.mjs"
+  },
+  "exports": "./src/compiler.mjs",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "verify": "node scripts/verify.mjs",
+    "bench": "node benchmarks/run.mjs",
+    "check": "node src/cli.mjs check",
+    "start": "node src/cli.mjs",
+    "bench:runtime": "node benchmarks/wasm-runtime.mjs"
+  }
+}

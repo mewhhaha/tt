@@ -1,92 +1,40 @@
-# Local development: no CI dependency
+# Local Node development; WebAssembly-only output
 
-The compiler is built, executed, tested, and benchmarked on the developer's own
-machine. GitHub is a source/history host, not an execution prerequisite. After
-obtaining the source and installing a toolchain, no network, credentials, CI
-artifact, container, package manager, or hosted compiler is required.
+Node.js 22+ is the intended compiler host; this checkpoint is tested on Node 22.16.0,
+Linux x86_64. No install step, Python, CMake, native compiler, CI download or external
+solver is needed. There are no third-party packages. Other hosts remain unqualified.
 
-The current implementation is dependency-free C++20. It was executed on Linux
-x86_64 using GCC 14.2.0 and Clang 17.0.0. Its source requires a POSIX host and the
-GCC/Clang `__int128` extension. macOS is not yet qualified; Windows should use a
-Linux environment such as WSL, not a claimed native Windows port.
+    node src/cli.mjs check examples/refinements.tt --metrics
+    node src/cli.mjs run examples/higher_order.tt
+    node src/cli.mjs build examples/higher_order.tt -o program.wasm
+    node src/cli.mjs exec program.wasm
+    npm test
+    npm run verify
 
-## Prerequisites
+Without npm: `node scripts/verify.mjs`. `run` executes generated Wasm, not a source
+interpreter. Saved modules run without TT source; pure modules have no host imports.
+See WASM.md to load them using the standard engine without this repository's runner.
+The compiler is Node code, not a compiler that itself needs to be built to Wasm.
 
-Install a GCC or Clang C++20 compiler, CMake 3.20+, a Make/Ninja build tool, and
-Python 3.9+. These are local development tools, not language dependencies. The
-driver reports missing tools and exits nonzero; it does not fetch replacements.
-`CXX` or `--compiler` must name a compiler executable, not a shell command with flags.
+Verification checks JS syntax, tests positive/negative and generated cases, runs
+examples and README code through Wasm, verifies standalone artifacts in a clean
+process, and records separate checking/emission and engine-stage benchmarks.
+Every compile call owns its arenas; this is not yet incremental compilation.
 
-```sh
-python3 dev.py doctor
-python3 dev.py verify
-```
+Build writes are atomic through an exclusive same-directory temporary file and
+rename. Failures preserve existing outputs. The CLI refuses non-.wasm output names
+and overwriting the source path. No fsync crash-durability guarantee is made.
 
-`verify` configures a Release build, builds the compiler/test/benchmark binaries,
-runs the complete CTest suite, checks and runs every example both from source and
-from a saved bytecode artifact, and runs benchmark work-regression gates. It stops
-on the first failing command. JSON measurements go to `build/benchmark-local.json`.
-The driver can be invoked from any working directory; relative build/output paths
-are anchored at the repository root.
+    npm run bench -- --sizes 500,1000,2000 --samples 11
+    npm run bench:runtime
+    node --cpu-prof src/cli.mjs check examples/records.tt
 
-```sh
-python3 dev.py verify --build-dir build-clean --compiler clang++ --jobs 2
-python3 dev.py test
-python3 dev.py bench --sizes 500 1000 2000 --samples 11
-python3 dev.py sanitize
-```
+Profiling changes the timing boundary. Separate Node startup, checking, emitting,
+WebAssembly.validate, Module construction, Instance construction, runtime calls,
+and result decoding. Engine code caches and lazy compilation affect repeated runs;
+never present them as cold-engine timings. RSS observations are not peak live memory.
 
-`sanitize` uses a separate Debug build with ASan and UBSan (Clang preferred).
-It executes the same conformance and kernel tests locally. It does not measure
-sanitized code as the Release performance baseline. Do not hide sanitizer failures
-by automatically retrying without instrumentation.
-
-## Run the compiler
-
-```sh
-./build/tt check examples/refinements.tt --metrics
-./build/tt run examples/records.tt
-./build/tt build examples/records.tt -o /tmp/records.ttbc
-./build/tt exec /tmp/records.ttbc
-```
-
-`check` parses, infers structure, and verifies refinements without bytecode emission.
-`run` performs those checks, compiles, and executes locally. `build` emits a TTBC
-artifact without executing the program; `exec` validates and executes that artifact.
-This initial backend is bytecode, not native code or Wasm. The VM is not yet an
-audited hostile-input sandbox.
-
-## Direct commands and minimal installation
-
-The driver is optional; it is only a wrapper around the normal build tools:
-
-```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel 2
-ctest --test-dir build --output-on-failure
-python3 benchmarks/run.py --binary build/tt-bench --output build/benchmark-local.json
-cmake --install build --prefix "$HOME/.local"
-```
-
-Building just the compiler needs no Python:
-
-```sh
-cmake -S . -B build-minimal -DCMAKE_BUILD_TYPE=Release \
-  -DBUILD_TESTING=OFF -DTT_BUILD_BENCHMARKS=OFF
-cmake --build build-minimal --parallel 2
-./build-minimal/tt run examples/records.tt
-```
-
-## Iteration policy
-
-Each hourly iteration must use the available local execution environment to run
-its changes. Record commands, toolchain, actual results, and limits. A future CI
-workflow may repeat these commands; it is never the only way to run the compiler
-and is not a substitute for a reported local test. If a scheduled environment lacks
-a local toolchain, report that limitation instead of claiming execution occurred.
-
-Compiler construction time (building the C++ project) and TT source compilation
-time (running `tt check`/`tt build`) are separate measurements. The prototype's
-header-heavy C++ organization can make rebuilding the compiler itself relatively
-expensive; the benchmark measures the latter boundary and does not conceal this
-as a faster C++ build.
+No CI result substitutes for local execution. No old C++ sanitizer result certifies
+Node or Wasm. Retained C++ source and older evidence are historical only and do not
+participate in this active workflow. Untrusted Wasm is not safe merely because it
+has plausible metadata or a fuel export: see the explicit trust limitations.

@@ -10,3 +10,14 @@ __pycache__/
 /*.pid
 /*.exit
 /*-exit.txt
+
+# Active Node workflow
+node_modules/
+benchmarks/local.json
+coverage/
+*.cpuprofile
+*.heapprofile
+
+# Wasm-only active output
+*.wasm
+benchmarks/wasm-runtime-local.json
