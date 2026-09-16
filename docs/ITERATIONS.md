@@ -222,3 +222,38 @@ are warm-process V8 observations and likewise are not used as a speedup claim.
 
 Remaining backend work includes static constant liveness, compact/unboxed layouts,
 allocator/ABI auditing, source-mapped traps, ownership/GC and a broader engine matrix.
+
+## 2026-09-16 — Wasm ABI metadata integrity
+
+Hypothesis: the artifact boundary can detect accidental corruption of both executable
+Wasm bytes and host-visible ABI metadata with a fixed, negligible size cost and no
+runtime-language changes. ABI 1 only hashed the preceding Wasm core; valid custom
+section edits could change record-label strings or heap metadata while preserving the
+core digest.
+
+Bumped the provisional format to ABI 2. Emission now adds `metadata_sha256`, computed
+over the canonical metadata fields including `core_sha256`. Loading requires the
+exact ABI 2 field set, verifies both hashes, rejects duplicate labels, and requires an
+8-byte-aligned static heap boundary. ABI 1 is rejected explicitly. This protects
+integrity only: anyone able to rewrite an artifact can recompute both hashes, so this
+is not authentication and does not expand the hostile-module trust claim.
+
+Fresh local Node 22.16.0 / Linux checks used the recovered Wasm handoff. Its
+`src/wasm-host.mjs` was byte-identical to the current-main blob; current main's
+runtime-linking `src/wasm.mjs` was reconstructed to the exact pre-change blob hash and
+then received the same small ABI emission patch. Results:
+
+- `npm test`: 103/103 passed, with three new adversarial ABI tests. One mutates valid
+  Wasm custom-section labels without touching the core, one recomputes the metadata
+  digest but supplies duplicate labels/unaligned heap metadata, and one exercises the
+  explicit version/field-set compatibility boundary.
+- `npm run verify`: passed tests, all four examples, README execution, standalone
+  Wasm, 500/1,000/2,000 work gates, and the 1,000-item map/fold engine-stage check.
+- `npm run bench -- --sizes 500,1000,2000 --samples 11` and `npm run bench:runtime`
+  passed. In a matched four-program size check, ABI 2 added exactly 85 bytes to each
+  sampled artifact. Timing medians are retained as observations only; no speed claim.
+
+The handoff predates current main's demanded-linking and repository-policy tests, so
+103 is not presented as an exact post-commit main aggregate. The changed production
+files were based on exact current-main blobs, and the behavior-specific tests passed
+locally. Source-mapped traps and deeper allocator/host-lifetime auditing remain next.

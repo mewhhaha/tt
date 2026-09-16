@@ -123,8 +123,9 @@ export class WasmEmit {
     for (const name of ['main', 'set_fuel', 'error_code', 'fuel_remaining']) this.m.export(name, 0, this.m.functionId(name));
     this.m.export('memory', 2, 0);
     const core = this.m.finish(this.data.finish(), heap, [[I32, heap], [I32, 0], [I64, 10_000_000], [I64, 10_000_000], [I32, 0]]);
-    const abi = { schema: 'tt-wasm-abi', version: 1, labels: this.ast.symbols.names, heap_start: heap,
+    const abi = { schema: 'tt-wasm-abi', version: 2, labels: this.ast.symbols.names, heap_start: heap,
       core_bytes: core.length, core_sha256: createHash('sha256').update(core).digest('hex') };
+    abi.metadata_sha256 = createHash('sha256').update(Buffer.from(JSON.stringify(abi))).digest('hex');
     const custom = new Bytes().name('tt.abi').add(Buffer.from(JSON.stringify(abi))).finish();
     const wasm = Buffer.concat([core, Buffer.from([0, ...uleb(custom.length)]), custom]);
     if (wasm.length > LIMITS.artifactBytes) fail(0, 'Wasm artifact size limit exceeded', 'E_LIMIT');

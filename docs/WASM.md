@@ -1,4 +1,4 @@
-# WebAssembly-only backend and provisional ABI 1
+# WebAssembly-only backend and provisional ABI 2
 
 The compiler runs in Node.js. Its only executable output is standard Core Wasm
 (`00 61 73 6d 01 00 00 00`), using i32/i64, linear memory, structured control flow,
@@ -67,10 +67,14 @@ mutate exported memory while relying on language invariants. There is no GC yet.
 ## Artifact checks and trust
 
 A final `tt.abi` custom section contains schema/version, interned label strings,
-static heap boundary, and SHA-256 of preceding module bytes. This makes standalone
-CLI loading possible without TT source or a sidecar. The loader rejects duplicate
-or malformed metadata, missing exports, imports, unsupported schema, corrupt bytes
-and legacy TTBC. The digest is not a signature or proof of typechecking.
+static heap boundary, SHA-256 of preceding module bytes, and a second SHA-256 over
+the canonical metadata fields. This makes standalone CLI loading possible without
+TT source or a sidecar while detecting accidental corruption of either the Wasm
+core or host-visible label/layout metadata. ABI 2 requires the exact metadata field
+set, unique label strings, and an 8-byte-aligned static heap boundary; ABI 1 artifacts
+are rejected rather than silently reinterpreted. The loader also rejects missing
+exports, imports, unsupported schema, corrupt bytes and legacy TTBC. These digests
+are integrity checks, not signatures, authenticity proofs, or proof of typechecking.
 
 WebAssembly.validate and the engine validate the machine code. The host decoder
 bounds memory ranges, sizes/depths, tags, UTF-8 and cycles. `exec` accepts TT ABI
@@ -78,7 +82,8 @@ modules, not arbitrary Wasm applications. A deliberately forged module can bypas
 its own fuel accounting; this is NOT an audited hostile-module sandbox. Run trusted
 artifacts only. Strong hostile-input isolation needs a separately audited boundary.
 Runtime TT diagnostics currently identify the error class, not an exact source
-instruction; source maps and stable public ABI compatibility remain open work.
+instruction; source maps and a future stable public ABI remain open work. ABI 2 is
+still provisional and intentionally makes the ABI 1 compatibility break explicit.
 
 ## Migration
 

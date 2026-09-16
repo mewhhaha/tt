@@ -60,6 +60,36 @@ tests, examples, benchmarks or standalone execution. Future reintroduction of th
 removed implementation families therefore fails the supported local verification
 path immediately.
 
+### ABI integrity hardening
+
+This iteration bumps the provisional artifact ABI from 1 to 2. The prior format
+hashed the Wasm core but left host-visible metadata (including record-label strings
+and the static heap boundary) outside that digest. Structurally valid custom-section
+corruption could therefore change decoded metadata without triggering the core hash.
+ABI 2 retains the core digest and adds a deterministic SHA-256 over the canonical
+metadata fields; the loader also requires the exact field set, unique labels and an
+8-byte-aligned heap boundary. ABI 1 artifacts now fail explicitly instead of being
+silently reinterpreted. The digest remains an integrity check, not authentication.
+
+Fresh local Node 22.16.0 / Linux evidence used the recovered Wasm handoff, whose
+`wasm-host.mjs` blob is byte-identical to current main; the current demanded-linking
+`wasm.mjs` baseline was separately reconstructed byte-for-byte from main before the
+same ABI-only patch was applied. On the executable handoff:
+
+- `npm test`: 103/103 passed, including three new ABI-corruption/compatibility tests.
+- `npm run verify`: passed those 103 tests, four examples, README execution,
+  standalone saved-Wasm execution, 500/1,000/2,000 compile work gates and the
+  1,000-element map/fold engine-stage check.
+- Explicit `npm run bench -- --sizes 500,1000,2000 --samples 11` and
+  `npm run bench:runtime` passed. Four representative artifacts each grew by 85
+  bytes from the additional metadata digest field; no compile/runtime speed claim is
+  made from shared-host timing samples.
+
+This is not an exact post-commit aggregate for every current-main test because the
+recovered handoff predates the demanded-runtime-linking and repository-policy tests.
+The two production files changed here were verified against their exact current-main
+blob baselines before publication; the new ABI tests exercise the changed behavior.
+
 ## Repository state
 
 Current main contains only the Node/Wasm implementation. The removed legacy files
@@ -83,6 +113,6 @@ incremental compilation remain open. Generic refinement transport is conservativ
 for symbolic arithmetic and unsummarized collection primitives. Cross-engine and
 cross-platform qualification remain open. Production gates are unchanged.
 
-Next: audit allocator/ABI lifetime behavior and source-mapped traps, extend bounded
+Next: continue allocator/lifetime auditing and add source-mapped traps, extend bounded
 refinement relations to selected arithmetic/container summaries, then variants/
 recursion and nominal evidence before effects/staging and the systems-only ECS slice.

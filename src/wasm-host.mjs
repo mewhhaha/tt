@@ -14,11 +14,19 @@ export function loadWasm(input) {
   if (WebAssembly.Module.imports(module).length) bad('TT modules must not require host imports');
   const sections = WebAssembly.Module.customSections(module, 'tt.abi'); if (sections.length !== 1) bad('missing or duplicate tt.abi section');
   let abi; try { abi = JSON.parse(utf8.decode(sections[0])); } catch { bad('invalid tt.abi metadata'); }
-  if (abi?.schema !== 'tt-wasm-abi' || abi.version !== 1 || !Array.isArray(abi.labels) || abi.labels.length > 500_000 ||
+  const fields = ['core_bytes', 'core_sha256', 'heap_start', 'labels', 'metadata_sha256', 'schema', 'version'];
+  if (abi?.schema !== 'tt-wasm-abi' || abi.version !== 2 || Object.keys(abi).sort().join('\0') !== fields.join('\0') ||
+      !Array.isArray(abi.labels) || abi.labels.length > 500_000 ||
       !abi.labels.every(x => typeof x === 'string' && x.isWellFormed() && Buffer.byteLength(x) <= LIMITS.sourceBytes) ||
-      !Number.isInteger(abi.heap_start) || abi.heap_start < 16 || abi.heap_start > 32 * 1024 * 1024 ||
+      new Set(abi.labels).size !== abi.labels.length ||
+      !Number.isInteger(abi.heap_start) || abi.heap_start < 16 || abi.heap_start > 32 * 1024 * 1024 || abi.heap_start % 8 !== 0 ||
       !Number.isInteger(abi.core_bytes) || abi.core_bytes < 8 || abi.core_bytes >= bytes.length ||
-      !/^[0-9a-f]{64}$/.test(abi.core_sha256)) bad('unsupported or malformed TT Wasm ABI');
+      !/^[0-9a-f]{64}$/.test(abi.core_sha256) || !/^[0-9a-f]{64}$/.test(abi.metadata_sha256))
+    bad('unsupported or malformed TT Wasm ABI');
+  const metadata = { schema: abi.schema, version: abi.version, labels: abi.labels, heap_start: abi.heap_start,
+    core_bytes: abi.core_bytes, core_sha256: abi.core_sha256 };
+  if (createHash('sha256').update(Buffer.from(JSON.stringify(metadata))).digest('hex') !== abi.metadata_sha256)
+    bad('TT Wasm ABI metadata integrity mismatch');
   // Check the final custom section boundary, with a bounded u32 decoder.
   let at = abi.core_bytes;
   const u32 = () => { let x = 0; for (let i = 0; i < 5; i++) {
