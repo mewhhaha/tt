@@ -115,7 +115,7 @@ test('engine fuel checks work and instance entry resets heap, depth and fuel', (
 test('Wasm memory growth preserves contents and checked allocation stays within a fixed maximum', () => {
   const values = Array.from({ length: 4000 }, (_, i) => String(i)).join(',');
   assert.equal(run(`let a=map (fn x=>x+1) [${values}]; return get a 3999;`).output, '4000');
-  const { instance } = run('return 42;');
+  const { module } = loadWasm(compile('return 42;').wasm), instance = new WebAssembly.Instance(module, {});
   assert.throws(() => instance.exports.memory.grow(1024), RangeError);
 });
 

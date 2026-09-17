@@ -34,7 +34,8 @@ test('live heap watermark belongs to one successful main invocation', () => {
 
 test('execute reports dynamic heap bytes separately from memory capacity', () => {
   assert.equal(execute(compile('return 1;').wasm).metrics.heap_bytes, 0);
-  const dynamic = execute(compile('return 1+2;').wasm);
+  const bytes = compile('return 1+2;').wasm, dynamic = execute(bytes);
   assert.ok(dynamic.metrics.heap_bytes > 0); assert.equal(dynamic.metrics.heap_bytes % 8, 0);
-  assert.ok(dynamic.metrics.heap_bytes < dynamic.instance.exports.memory.buffer.byteLength);
+  const { module } = loadWasm(bytes), instance = new WebAssembly.Instance(module, {});
+  assert.ok(dynamic.metrics.heap_bytes < instance.exports.memory.buffer.byteLength);
 });

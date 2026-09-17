@@ -102,18 +102,18 @@ export function readValue(memory, pointer, abi) {
       const child = (q, nextDepth) => { const value = read(q, nextDepth); nesting = Math.max(nesting, lastNesting + 1); return value; };
       if (tag === Tag.Closure) {
         for (let i = 0; i < len; i++) child(view.getUint32(p + 16 + i * 4, true), depth + 1);
-        if (declaredDepth !== nesting) bad('invalid result nesting metadata'); lastNesting = nesting; const value = { kind: 'Closure' }; memo.set(p, { value, nesting }); return value;
+        if (declaredDepth !== nesting) bad('invalid result nesting metadata'); lastNesting = nesting; const value = Object.freeze({ kind: 'Closure' }); memo.set(p, { value, nesting }); return value;
       }
       if (tag === Tag.Array) {
         const values = []; for (let i = 0; i < len; i++) values.push(child(view.getUint32(p + 16 + i * 4, true), depth + 1));
-        if (declaredDepth !== nesting) bad('invalid result nesting metadata'); lastNesting = nesting; const value = { kind: 'Array', values }; memo.set(p, { value, nesting }); return value;
+        if (declaredDepth !== nesting) bad('invalid result nesting metadata'); lastNesting = nesting; Object.freeze(values); const value = Object.freeze({ kind: 'Array', values }); memo.set(p, { value, nesting }); return value;
       }
       const labels = [], values = [], seen = new Set();
       for (let i = 0; i < len; i++) {
         const label = view.getUint32(p + 16 + i * 8, true); if (label >= abi.labels.length || seen.has(label)) bad('invalid record label'); seen.add(label); labels.push(abi.labels[label]);
         values.push(child(view.getUint32(p + 20 + i * 8, true), depth + 1));
       }
-      if (declaredDepth !== nesting) bad('invalid result nesting metadata'); lastNesting = nesting; const value = { kind: 'Record', labels, values }; memo.set(p, { value, nesting }); return value;
+      if (declaredDepth !== nesting) bad('invalid result nesting metadata'); lastNesting = nesting; Object.freeze(labels); Object.freeze(values); const value = Object.freeze({ kind: 'Record', labels, values }); memo.set(p, { value, nesting }); return value;
     } finally { active.delete(p); }
   };
   return read(pointer >>> 0, 0);
@@ -158,5 +158,6 @@ export function execute(wasm, { fuel = 10_000_000 } = {}) {
   const execute_ms = performance.now() - start; start = performance.now(); const value = readValue(instance.exports.memory, pointer, loaded.abi); const decode_ms = performance.now() - start;
   start = performance.now(); const output = display(value); const display_ms = performance.now() - start;
   const heap_end = new DataView(instance.exports.memory.buffer).getUint32(12, true), heap_bytes = heap_end ? heap_end - loaded.abi.heap_start : null;
-  return { value, output, instance, module: loaded.module, metrics: { load_ms, instantiate_ms, execute_ms, decode_ms, display_ms, heap_bytes }, remaining_fuel: instance.exports.fuel_remaining() };
+  const metrics = Object.freeze({ load_ms, instantiate_ms, execute_ms, decode_ms, display_ms, heap_bytes });
+  return Object.freeze({ value, output, module: loaded.module, metrics, remaining_fuel: instance.exports.fuel_remaining() });
 }
