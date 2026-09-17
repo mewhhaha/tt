@@ -1,4 +1,4 @@
-# TT status — Node compiler, WebAssembly-only output — 2026-09-16
+# TT status — Node compiler, WebAssembly-only output — 2026-09-17
 
 **Research prototype, not production-ready.** The compiler and all supported tools
 are dependency-free JavaScript ES modules running locally under Node 22+. The sole
@@ -62,14 +62,14 @@ path immediately.
 
 ### ABI integrity hardening
 
-This iteration bumps the provisional artifact ABI from 1 to 2. The prior format
-hashed the Wasm core but left host-visible metadata (including record-label strings
-and the static heap boundary) outside that digest. Structurally valid custom-section
-corruption could therefore change decoded metadata without triggering the core hash.
-ABI 2 retains the core digest and adds a deterministic SHA-256 over the canonical
-metadata fields; the loader also requires the exact field set, unique labels and an
-8-byte-aligned heap boundary. ABI 1 artifacts now fail explicitly instead of being
-silently reinterpreted. The digest remains an integrity check, not authentication.
+The provisional artifact ABI is version 2. The prior format hashed the Wasm core but
+left host-visible metadata (including record-label strings and the static heap boundary)
+outside that digest. Structurally valid custom-section corruption could therefore
+change decoded metadata without triggering the core hash. ABI 2 retains the core
+digest and adds a deterministic SHA-256 over the canonical metadata fields; the
+loader also requires the exact field set, unique labels and an 8-byte-aligned heap
+boundary. ABI 1 artifacts fail explicitly instead of being silently reinterpreted.
+The digest remains an integrity check, not authentication.
 
 Fresh local Node 22.16.0 / Linux evidence used the recovered Wasm handoff, whose
 `wasm-host.mjs` blob is byte-identical to current main; the current demanded-linking
@@ -87,8 +87,44 @@ same ABI-only patch was applied. On the executable handoff:
 
 This is not an exact post-commit aggregate for every current-main test because the
 recovered handoff predates the demanded-runtime-linking and repository-policy tests.
-The two production files changed here were verified against their exact current-main
-blob baselines before publication; the new ABI tests exercise the changed behavior.
+The two production files changed there were verified against their exact current-main
+blob baselines before publication; the ABI tests exercise the changed behavior.
+
+### Source-positioned Wasm runtime traps
+
+Wasm runtime failures now preserve the source operation responsible for the trap.
+The emitter writes the current source offset before fuel checks and before operations
+that can enter runtime helpers. The Wasm trap helper snapshots that offset into the
+already-reserved low-memory diagnostic area before trapping; the Node loader reads it
+only after a `WebAssembly.RuntimeError` and constructs the ordinary `TTError` with
+that position. Higher-order `map`/`fold` loops explicitly restore their caller site
+after invoking a source closure so loop fuel/allocation failures are not mislabeled
+as the callback's last expression. No JavaScript TT evaluation or host import was
+introduced.
+
+Local Node 22.16.0 / Linux verification used source files reconstructed byte-for-byte
+from the live `20a7a6d` production blobs, plus current regression additions and three
+new source-location tests:
+
+- `npm test`: 111/111 passed. New cases cover arithmetic and bounds traps, a nested
+  callback trap, higher-order fuel-site restoration, and CLI line/column rendering
+  with non-ASCII source preceding the failure.
+- `npm run verify`: passed the 111 tests, all four source/Wasm examples, README,
+  standalone saved-Wasm execution, compile work gates, and the separate 1,000-element
+  map/fold engine-stage check.
+- `npm run bench -- --sizes 500,1000,2000 --samples 11` and `npm run bench:runtime`
+  passed. A matched five-program artifact comparison against the exact pre-change
+  production sources kept function counts unchanged and added 31 bytes (literal),
+  47 (arithmetic), 79 (closure), 107 (map), and 60 (record). Warm in-process compile
+  medians moved both directions, so no latency claim is made.
+- A saved pre-change ABI-2 module still executes under the new host. A pre-change
+  module that traps reports source offset 0, as expected because old artifacts did
+  not record trap locations. ABI version, metadata fields, and public exports did
+  not change.
+
+The local workspace was reconstructed because direct `git clone` from the execution
+sandbox has no public DNS. Production source baselines were exact GitHub blobs; this
+is not presented as a fresh network clone qualification.
 
 ## Repository state
 
@@ -103,8 +139,10 @@ and JSON where useful; they are not executable implementations.
 
 The Wasm heap boxes generic values, uses a bounded per-main bump allocator and linear
 record lookup. It has no GC, reclaiming ownership system, persistent host object ABI
-or exported callable-closure interface. Runtime diagnostics identify error classes
-but not precise source instructions. ABI metadata and digests are integrity checks,
+or exported callable-closure interface. Runtime TT traps now carry source offsets for
+newly emitted artifacts, but saved Wasm still has no embedded source text, source map,
+or file identity; artifact-only `exec` therefore cannot reconstruct line/column text
+without external source provenance. ABI metadata and digests are integrity checks,
 not an audited hostile-module sandbox.
 
 Variants, recursion, modules, inferred effects/handlers, nominal declaration metadata,
@@ -113,6 +151,7 @@ incremental compilation remain open. Generic refinement transport is conservativ
 for symbolic arithmetic and unsummarized collection primitives. Cross-engine and
 cross-platform qualification remain open. Production gates are unchanged.
 
-Next: continue allocator/lifetime auditing and add source-mapped traps, extend bounded
-refinement relations to selected arithmetic/container summaries, then variants/
-recursion and nominal evidence before effects/staging and the systems-only ECS slice.
+Next: continue allocator/lifetime auditing, define external source provenance for
+standalone Wasm diagnostics, extend bounded refinement relations to selected
+arithmetic/container summaries, then variants/recursion and nominal evidence before
+effects/staging and the systems-only ECS slice.
