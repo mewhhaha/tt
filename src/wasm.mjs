@@ -67,7 +67,7 @@ export class WasmEmit {
   expression(id, f, scope) {
     const e = this.ast.nodes[id]; enter(this, e.pos); this.sourceNodes++;
     try {
-      f.call('tick');
+      f.i32(e.pos).gset(G.position).call('tick');
       switch (e.kind) {
         case 'Int': f.i32(this.data.integer(e.number)); break;
         case 'Bool': f.i32(e.number ? this.constants.true : this.constants.false); break;
@@ -85,29 +85,29 @@ export class WasmEmit {
           ordered.forEach((cap, i) => { f.get(p).i32(16 + 4 * i); this.load(cap, f, scope); f.call('put'); });
           f.get(p); break;
         }
-        case 'Call': this.expression(e.a, f, scope); this.expression(e.b, f, scope); f.call('invoke'); break;
+        case 'Call': this.expression(e.a, f, scope); this.expression(e.b, f, scope); f.i32(e.pos).gset(G.position).call('invoke'); break;
         case 'Record': case 'Array': {
           const fields = e.kind === 'Record' ? e.fields : e.items.map((x, i) => [i, x]);
           // Evaluate every element left-to-right before constructing the aggregate.
           const values = fields.map(([, x]) => { this.expression(x, f, scope); const local = f.local(); f.set(local); return local; });
           const record = e.kind === 'Record', width = record ? 8 : 4, p = f.local();
-          this.object(f, record ? Tag.Record : Tag.Array, fields.length, 16 + width * fields.length); f.set(p);
+          f.i32(e.pos).gset(G.position); this.object(f, record ? Tag.Record : Tag.Array, fields.length, 16 + width * fields.length); f.set(p);
           fields.forEach(([label], i) => {
             if (record) f.get(p).i32(label).store(16 + 8 * i);
             f.get(p).i32(16 + width * i + (record ? 4 : 0)).get(values[i]).call('put');
           }); f.get(p); break;
         }
-        case 'Field': this.expression(e.a, f, scope); f.i32(e.name).call('field'); break;
-        case 'Unary': this.expression(e.a, f, scope); f.call(e.text === '-' ? 'neg' : 'not'); break;
+        case 'Field': this.expression(e.a, f, scope); f.i32(e.pos).gset(G.position).i32(e.name).call('field'); break;
+        case 'Unary': this.expression(e.a, f, scope); f.i32(e.pos).gset(G.position).call(e.text === '-' ? 'neg' : 'not'); break;
         case 'Binary': {
           this.expression(e.a, f, scope);
           if (e.text === '&&' || e.text === '||') {
-            f.call('boolean').if(I32);
+            f.i32(e.pos).gset(G.position).call('boolean').if(I32);
             if (e.text === '&&') this.expression(e.b, f, scope); else f.i32(this.constants.true);
             f.else(); if (e.text === '&&') f.i32(this.constants.false); else this.expression(e.b, f, scope); f.end();
-          } else { this.expression(e.b, f, scope); f.call(binary.get(e.text)); } break;
+          } else { this.expression(e.b, f, scope); f.i32(e.pos).gset(G.position).call(binary.get(e.text)); } break;
         }
-        case 'If': this.expression(e.a, f, scope); f.call('boolean').if(I32); this.expression(e.b, f, scope);
+        case 'If': this.expression(e.a, f, scope); f.i32(e.pos).gset(G.position).call('boolean').if(I32); this.expression(e.b, f, scope);
           f.else(); this.expression(e.c, f, scope); f.end(); break;
         case 'Block':
           for (const b of e.bindings) { this.expression(b.expr, f, scope); const local = f.local(); f.set(local); scope.set(b.binder, { capture: false, index: local }); }
@@ -119,10 +119,10 @@ export class WasmEmit {
   run() {
     const entry = this.m.func('entry'); this.expression(this.ast.root, entry, new Map());
     const heap = this.data.size, main = this.m.func('main');
-    main.i32(heap).gset(G.heap).i32(0).gset(G.error).i32(0).gset(G.depth).gget(G.limit).gset(G.fuel).call('entry');
+    main.i32(heap).gset(G.heap).i32(0).gset(G.error).i32(0).gset(G.depth).i32(0).gset(G.position).i32(8).i32(0).store().gget(G.limit).gset(G.fuel).call('entry');
     for (const name of ['main', 'set_fuel', 'error_code', 'fuel_remaining']) this.m.export(name, 0, this.m.functionId(name));
     this.m.export('memory', 2, 0);
-    const core = this.m.finish(this.data.finish(), heap, [[I32, heap], [I32, 0], [I64, 10_000_000], [I64, 10_000_000], [I32, 0]]);
+    const core = this.m.finish(this.data.finish(), heap, [[I32, heap], [I32, 0], [I64, 10_000_000], [I64, 10_000_000], [I32, 0], [I32, 0]]);
     const abi = { schema: 'tt-wasm-abi', version: 2, labels: this.ast.symbols.names, heap_start: heap,
       core_bytes: core.length, core_sha256: createHash('sha256').update(core).digest('hex') };
     abi.metadata_sha256 = createHash('sha256').update(Buffer.from(JSON.stringify(abi))).digest('hex');

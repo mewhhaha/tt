@@ -1,7 +1,7 @@
 /** Runtime helpers are emitted as real Wasm functions, not JavaScript imports. */
 import { I32, I64 } from './wasm-binary.mjs';
 export const Tag = Object.freeze({ Unit: 0, Int: 1, Bool: 2, Text: 3, Array: 4, Record: 5, Closure: 6 });
-export const G = Object.freeze({ heap: 0, error: 1, fuel: 2, limit: 3, depth: 4 });
+export const G = Object.freeze({ heap: 0, error: 1, fuel: 2, limit: 3, depth: 4, position: 5 });
 export const Errors = Object.freeze({
   1: ['E_RUNTIME', 'integer overflow'], 2: ['E_RUNTIME', 'division by zero'],
   3: ['E_RUNTIME', 'remainder by zero'], 4: ['E_RUNTIME', 'array index out of bounds'],
@@ -57,7 +57,7 @@ export function installRuntime(m, constants, roots) {
   ];
   const fs = new Map(defs.filter(([name]) => wanted.has(name)).map(([name, p, r]) => [name, m.func(name, p, r)]));
   let f;
-  if (fs.has('trap')) { f = fs.get('trap'); f.get(0).gset(G.error).add(0x00); }
+  if (fs.has('trap')) { f = fs.get('trap'); f.i32(8).gget(G.position).store(); f.get(0).gset(G.error).add(0x00); }
   if (fs.has('tick')) { f = fs.get('tick'); f.gget(G.fuel).add(0x50); failIf(f, 8); f.gget(G.fuel).i64(1).add(0x7d).gset(G.fuel); }
   if (fs.has('alloc')) { f = fs.get('alloc'); {
     const old = f.local(), end = f.local(), pages = f.local();
@@ -135,15 +135,16 @@ export function installRuntime(m, constants, roots) {
   } }
   for (const name of ['map2', 'fold3']) {
     if (!fs.has(name)) continue;
-    f = fs.get(name); const len = f.local(), i = f.local(), result = f.local(), item = f.local();
+    f = fs.get(name); const len = f.local(), i = f.local(), result = f.local(), item = f.local(), site = f.local();
+    f.gget(G.position).set(site);
     f.get(1).i32(Tag.Array).call('kind').drop(); f.get(1).load(4).set(len);
     if (name === 'map2') f.get(len).i32(4).add(0x6c).i32(16).add(0x6a).i32(Tag.Array).get(len).call('object').set(result);
     else f.get(0).load(20).set(result);
     f.block().loop().get(i).get(len).add(0x4f).brIf(1).call('tick');
     f.get(1).get(i).i32(4).add(0x6c, 0x6a).load(16).set(item);
-    f.get(0).load(16);
-    if (name === 'fold3') f.get(result).call('invoke');
-    f.get(item).call('invoke');
+    f.get(site).gset(G.position).get(0).load(16);
+    if (name === 'fold3') f.get(result).call('invoke').get(site).gset(G.position);
+    f.get(item).call('invoke').get(site).gset(G.position);
     if (name === 'map2') { f.set(item); f.get(result).get(i).i32(4).add(0x6c).i32(16).add(0x6a).get(item).call('put'); }
     else f.set(result);
     f.get(i).i32(1).add(0x6a).set(i).br(0).end().end().get(result);

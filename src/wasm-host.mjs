@@ -90,7 +90,8 @@ export function execute(wasm, { fuel = 10_000_000 } = {}) {
   catch (e) {
     if (!(e instanceof WebAssembly.RuntimeError)) throw e;
     const error = Errors[instance.exports.error_code()];
-    if (error) fail(0, error[1], error[0]); fail(0, 'unexpected Wasm trap: ' + e.message, 'E_RUNTIME');
+    const position = new DataView(instance.exports.memory.buffer).getUint32(8, true);
+    if (error) fail(position, error[1], error[0]); fail(position, 'unexpected Wasm trap: ' + e.message, 'E_RUNTIME');
   }
   const execute_ms = performance.now() - start;
   start = performance.now(); const value = readValue(instance.exports.memory, pointer, loaded.abi), output = display(value);
