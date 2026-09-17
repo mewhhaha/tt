@@ -1,5 +1,6 @@
 /** Runtime helpers are emitted as real Wasm functions, not JavaScript imports. */
 import { I32, I64 } from './wasm-binary.mjs';
+import { INTEGER_OPS, isComparison, emitIntegerBinary, emitIntegerNeg } from './wasm-integers.mjs';
 export const Tag = Object.freeze({ Unit: 0, Int: 1, Bool: 2, Text: 3, Array: 4, Record: 5, Closure: 6 });
 export const G = Object.freeze({ heap: 0, error: 1, fuel: 2, limit: 3, depth: 4, position: 5 });
 export const Errors = Object.freeze({
@@ -18,6 +19,8 @@ export const NativeEntry = Object.freeze({
   length: 'length', get: 'get1', map: 'map1', fold: 'fold1', concat: 'concat1', textLength: 'textLength',
 });
 const dependencies = Object.freeze({
+  ...Object.fromEntries(INTEGER_OPS.map(([name]) => ['raw:' + name, isComparison(name) ? [] : ['trap']])),
+  'raw:neg': ['trap'],
   trap: [], tick: ['trap'], alloc: ['trap'], object: ['alloc'], put: ['trap'], kind: ['trap'],
   integer: ['kind'], boolean: ['kind'], box: ['object'], bool: [], invoke: ['tick', 'trap', 'kind'],
   field: ['kind', 'tick', 'trap'], neg: ['integer', 'trap', 'box'], not: ['boolean', 'bool'],
@@ -42,7 +45,7 @@ function closure(roots) {
   }
   return wanted;
 }
-export function installRuntime(m, constants, roots) {
+export function installRuntime(m, constants, roots, bulkMemory = false) {
   const wanted = closure(roots);
   const sig = wanted.has('invoke') ? m.type([I32, I32], [I32]) : null;
   // Predeclare: direct call indices never depend on later demand/definition order.
@@ -53,6 +56,8 @@ export function installRuntime(m, constants, roots) {
     ['box', [I64], [I32]], ['bool', [I32], [I32]], ['invoke', [I32, I32], [I32]],
     ['field', [I32, I32], [I32]], ['neg', [I32], [I32]], ['not', [I32], [I32]],
     ...['add', 'sub', 'mul', 'div', 'mod', 'eq', 'ne', 'lt', 'le', 'gt', 'ge'].map(n => [n, [I32, I32], [I32]]),
+    ...INTEGER_OPS.map(([name]) => ['raw:' + name, [I64, I64], [isComparison(name) ? I32 : I64]]),
+    ['raw:neg', [I64], [I64]],
     ...['length', 'get1', 'get2', 'map1', 'map2', 'fold1', 'fold2', 'fold3', 'concat1', 'concat2', 'textLength'].map(n => [n, [I32, I32], [I32]]),
     ['set_fuel', [I64], []], ['error_code', [], [I32]], ['fuel_remaining', [], [I64]],
   ];
@@ -99,24 +104,11 @@ export function installRuntime(m, constants, roots) {
     f.i64(0).get(a).add(0x7d).call('box'); }
   }
   if (fs.has('not')) { f = fs.get('not'); f.get(0).call('boolean').add(0x45).call('bool'); }
-  for (const [name, op] of [['add', 0x7c], ['sub', 0x7d], ['mul', 0x7e], ['div', 0x7f], ['mod', 0x81],
-    ['eq', 0x51], ['ne', 0x52], ['lt', 0x53], ['le', 0x57], ['gt', 0x55], ['ge', 0x59]]) {
-    if (!fs.has(name)) continue;
-    f = fs.get(name); const a = f.local(I64), b = f.local(I64), r = f.local(I64);
-    f.get(0).call('integer').set(a); f.get(1).call('integer').set(b);
-    if (name === 'div' || name === 'mod') { f.get(b).add(0x50); failIf(f, name === 'div' ? 2 : 3); }
-    if (name === 'div' || name === 'mul') {
-      f.get(a).i64(-(1n << 63n)).add(0x51).get(b).i64(-1).add(0x51, 0x71); failIf(f, 1);
-      if (name === 'mul') { f.get(b).i64(-(1n << 63n)).add(0x51).get(a).i64(-1).add(0x51, 0x71); failIf(f, 1); }
-    }
-    f.get(a).get(b).add(op);
-    if (['eq', 'ne', 'lt', 'le', 'gt', 'ge'].includes(name)) { f.call('bool'); continue; }
-    f.set(r);
-    if (name === 'add') { f.get(a).get(r).add(0x85).get(b).get(r).add(0x85, 0x83).i64(0).add(0x53); failIf(f, 1); }
-    if (name === 'sub') { f.get(a).get(b).add(0x85).get(a).get(r).add(0x85, 0x83).i64(0).add(0x53); failIf(f, 1); }
-    if (name === 'mul') { f.get(b).i64(0).add(0x52).if(); f.get(r).get(b).add(0x7f).get(a).add(0x52); failIf(f, 1); f.end(); }
-    f.get(r).call('box');
+  for (const [name, opcode] of INTEGER_OPS) {
+    if (fs.has(name)) emitIntegerBinary(fs.get(name), name, opcode, true);
+    if (fs.has('raw:' + name)) emitIntegerBinary(fs.get('raw:' + name), name, opcode, false);
   }
+  if (fs.has('raw:neg')) emitIntegerNeg(fs.get('raw:neg'));
   // Curried primitives use precisely the same captured-environment ABI as source lambdas.
   const curry = (name, next, count) => {
     if (!fs.has(name)) return;
@@ -156,12 +148,23 @@ export function installRuntime(m, constants, roots) {
     f.get(1).i32(Tag.Text).call('kind').load(4).set(blen);
     f.get(alen).get(blen).add(0x6a).tee(n).i32(4 * 1024 * 1024).add(0x4b); failIf(f, 11);
     f.get(n).i32(16).add(0x6a).i32(Tag.Text).get(n).call('object').set(p);
+    if (bulkMemory) {
+      // Full-fuel path is equivalent to all byte-loop ticks. Otherwise retain the
+      // original loop, including partially written payload at fuel exhaustion.
+      f.gget(G.fuel).get(n).add(0xad, 0x5a).if();
+      f.gget(G.fuel).get(n).add(0xad, 0x7d).gset(G.fuel);
+      f.get(p).i32(16).add(0x6a).get(a).i32(16).add(0x6a).get(alen).add(0xfc, 0x0a, 0, 0);
+      f.get(p).i32(16).add(0x6a).get(alen).add(0x6a).get(1).i32(16).add(0x6a).get(blen).add(0xfc, 0x0a, 0, 0);
+      f.else();
+    }
     for (const [source, length, second] of [[a, alen, false], [1, blen, true]]) {
       f.i32(0).set(i).block().loop().get(i).get(length).add(0x4f).brIf(1).call('tick');
       f.get(p).get(i).add(0x6a); if (second) f.get(alen).add(0x6a);
       f.get(source).get(i).add(0x6a).load8(16).store8(16);
       f.get(i).i32(1).add(0x6a).set(i).br(0).end().end();
-    } f.get(p);
+    }
+    if (bulkMemory) f.end();
+    f.get(p);
   } }
   if (fs.has('set_fuel')) { f = fs.get('set_fuel'); f.get(0).i64(0).add(0x53); failIf(f, 12); f.get(0).gset(G.limit); }
   if (fs.has('error_code')) fs.get('error_code').gget(G.error);

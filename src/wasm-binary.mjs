@@ -13,11 +13,52 @@ export function sleb(value) {
     out.push(b | (done ? 0 : 128)); if (done) return out;
   }
 }
+/** Grow geometrically; bulk copy byte spans instead of retaining boxed JS numbers. */
 export class Bytes {
-  a = [];
-  add(...parts) { for (const part of parts) { if (typeof part === 'number') this.a.push(part); else for (const b of part) this.a.push(b); } return this; }
-  u(x) { return this.add(uleb(x)); }
-  name(x) { const bytes = Buffer.from(x); return this.u(bytes.length).add(bytes); }
+  buffer = Buffer.allocUnsafe(128); length = 0;
+  get a() { return this.buffer.subarray(0, this.length); }
+  reserve(extra) {
+    const required = this.length + extra;
+    if (!Number.isSafeInteger(extra) || extra < 0 || required > LIMITS.artifactBytes)
+      fail(0, 'Wasm byte buffer limit exceeded', 'E_LIMIT');
+    if (required <= this.buffer.length) return;
+    const next = Buffer.allocUnsafe(Math.min(LIMITS.artifactBytes, Math.max(required, this.buffer.length * 2)));
+    next.set(this.a); this.buffer = next;
+  }
+  add(...parts) {
+    for (const part of parts) {
+      if (typeof part === 'number') { this.reserve(1); this.buffer[this.length++] = part; }
+      else if (part instanceof Uint8Array || Array.isArray(part)) {
+        this.reserve(part.length); this.buffer.set(part, this.length); this.length += part.length;
+      } else { for (const byte of part) { this.reserve(1); this.buffer[this.length++] = byte; } }
+    }
+    return this;
+  }
+  u(value) {
+    if (!Number.isSafeInteger(value) || value < 0 || value > 0xffffffff) throw new RangeError('u32 LEB input');
+    this.reserve(5);
+    do { const byte = value & 127; value >>>= 7; this.buffer[this.length++] = byte | (value ? 128 : 0); } while (value);
+    return this;
+  }
+  s(value) {
+    // i32 indices/offsets need no BigInt or temporary operand array.
+    if (Number.isSafeInteger(value)) {
+      this.reserve(8);
+      for (;;) {
+        const byte = value & 127; value = Math.floor(value / 128);
+        const done = (value === 0 && !(byte & 64)) || (value === -1 && (byte & 64));
+        this.buffer[this.length++] = byte | (done ? 0 : 128); if (done) return this;
+      }
+    }
+    value = BigInt(value);
+    for (;;) {
+      const byte = Number(value & 127n); value >>= 7n;
+      const done = (value === 0n && !(byte & 64)) || (value === -1n && (byte & 64));
+      this.reserve(1); this.buffer[this.length++] = byte | (done ? 0 : 128); if (done) return this;
+    }
+  }
+  name(value) { const bytes = Buffer.from(value); return this.u(bytes.length).add(bytes); }
+  // Never expose capacity/uninitialized bytes, or an alias changed by later writes.
   finish() { return Buffer.from(this.a); }
 }
 export class FunctionBody extends Bytes {
@@ -32,8 +73,8 @@ export class FunctionBody extends Bytes {
   tee(n) { return this.add(0x22).u(n); }
   gget(n) { return this.add(0x23).u(n); }
   gset(n) { return this.add(0x24).u(n); }
-  i32(n) { return this.add(0x41, sleb(n)); }
-  i64(n) { return this.add(0x42, sleb(n)); }
+  i32(n) { return this.add(0x41).s(n); }
+  i64(n) { return this.add(0x42).s(n); }
   call(name) { return this.add(0x10).u(this.module.functionId(name)); }
   indirect(type) { return this.add(0x11).u(type).u(0); }
   load(offset = 0) { return this.add(0x28).u(2).u(offset); }

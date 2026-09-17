@@ -9,7 +9,7 @@ import { execute } from './wasm-host.mjs';
 export { TTError } from './core.mjs';
 export { execute, loadWasm, readValue, display } from './wasm-host.mjs';
 
-function compilePrepared(prepared, emit, parse_ms) {
+function compilePrepared(prepared, emit, parse_ms, optimize) {
   const { ast, source, sourceName, sources = null, modules = [] } = prepared;
   try {
     const types = new Types(), inference = new Infer(ast, types);
@@ -21,7 +21,7 @@ function compilePrepared(prepared, emit, parse_ms) {
     start = performance.now(); new Refine(ast, types, inference).run(); const refine_ms = performance.now() - start;
     let wasm = null, emit_ms = 0, validation_ms = 0, emission = {};
     if (emit) {
-      start = performance.now(); ({ wasm, ...emission } = new WasmEmit(ast, inference, source, sourceName, effects, sources).run()); emit_ms = performance.now() - start;
+      start = performance.now(); ({ wasm, ...emission } = new WasmEmit(ast, inference, source, sourceName, effects, sources, optimize).run()); emit_ms = performance.now() - start;
       start = performance.now(); if (!WebAssembly.validate(wasm)) throw new Error('internal: emitter produced invalid Wasm'); validation_ms = performance.now() - start;
     }
     return { wasm, type: types.show(type, ast.symbols), effects: effects.effects,
@@ -33,17 +33,19 @@ function compilePrepared(prepared, emit, parse_ms) {
   } catch (error) { if (sources && typeof error.pos === 'number') error.source = locateSource(sources, error.pos); throw error; }
 }
 /** Request-local arenas; compilation never executes TT code or ambient I/O. */
-export function compile(source, { emit = true, sourceName = '' } = {}) {
+export function compile(source, { emit = true, sourceName = '', optimize = true } = {}) {
+  if (typeof optimize !== 'boolean') throw new TypeError('optimize must be Boolean');
   const start = performance.now(), ast = new Parser(source, { moduleName: sourceName || 'main.tt' }).parse();
-  return compilePrepared({ ast, source, sourceName }, emit, performance.now() - start);
+  return compilePrepared({ ast, source, sourceName }, emit, performance.now() - start, optimize);
 }
-export function compileProject(entry, sources, { emit = true } = {}) {
+export function compileProject(entry, sources, { emit = true, optimize = true } = {}) {
+  if (typeof optimize !== 'boolean') throw new TypeError('optimize must be Boolean');
   const start = performance.now(), prepared = prepareModules(entry, sources);
-  return compilePrepared(prepared, emit, performance.now() - start);
+  return compilePrepared(prepared, emit, performance.now() - start, optimize);
 }
 export function check(source) { return compile(source, { emit: false }); }
 export function run(source, options = {}) {
-  const { sourceName = '', ...executionOptions } = options;
-  const result = compile(source, { sourceName }), execution = execute(result.wasm, executionOptions);
+  const { sourceName = '', optimize = true, ...executionOptions } = options;
+  const result = compile(source, { sourceName, optimize }), execution = execute(result.wasm, executionOptions);
   return { ...result, ...execution, metrics: result.metrics, execution_metrics: execution.metrics };
 }

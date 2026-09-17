@@ -5,7 +5,38 @@ local dependency-free Node ES modules; TT executes only as emitted WebAssembly.
 No native/Python implementation, package installation, CI artifact or host TT
 interpreter is required. The production-readiness checklist is unchanged.
 
-## Latest implemented slice
+## Latest performance iteration
+
+The emitter now writes directly into growing byte buffers. Numeric expression
+regions keep internal results in Wasm i64 values and box only at existing ABI
+boundaries. Checked operations share one implementation; no reassociation, proof
+skipping or effect/call elision is performed. Text concatenation uses memory.copy
+when fuel suffices, otherwise preserves the old byte loop and partial-write traps.
+
+Fresh local Node 22.16.0 evidence: baseline 202/202 tests passed; modified suite
+217/217 passed. Full local verification, existing compiler/runtime/module gates
+and both example applications passed. No existing test or work limit was weakened.
+
+Matched warm compilation medians improved from 35.030 to 10.967 ms for 2,000
+record fields/projections and 78.392 to 40.760 ms for 2,000 polymorphic calls. Across
+eight measured workloads the ratio was roughly 1.6-3.2x. New-process record compile
+wall time was 143.595 to 118.769 ms: warm results do not imply the same cold speedup.
+A 5,000-element arithmetic map/fold reduced dynamic bump allocation from 1,240,136
+to 400,136 bytes and Wasm execution from 1.836 to 1.219 ms/call. A simple map/fold
+control was effectively unchanged (0.741 to 0.762 ms). These are local workload
+observations, not cross-engine, whole-language or production-runtime guarantees.
+
+`compile`, `compileProject` and `run` accept `optimize: false` to retain the
+boxed/byte-loop reference lowering. All static checks still run. Fewer allocations
+can change when the allocation budget fails; raw heap images and addresses are not
+optimization-invariant. Public boxed layouts and ABI 2 remain unchanged.
+
+See [optimization contracts](OPTIMIZATION.md),
+[exact iteration evidence](iterations/2026-09-17-numeric-performance.md), and
+`benchmarks/numeric-performance.json` for raw matched samples. The previous
+module/effect evidence below is historical; its functionality is retained.
+
+## Implemented module/effect slice
 
 Source modules now have explicit relative imports and returned-record exports.
 Dependencies are parsed/initialized once per main invocation, with canonical
@@ -41,7 +72,7 @@ conservative cases, import initialization order and host trust contract.
   produce positions 17/17 and checksum 34. Invalid host input is rejected before
   reporting. This is a one-step simulation, not the complete systems-only ECS.
 
-## Fresh local evidence
+## Historical module/effect evidence
 
 Baseline main: `09eb97c5a8da7eaf97e039300ba5ab713f64295d`.
 Environment: Node v22.16.0 / V8 12.4.254.21-node.26 / Linux x64.

@@ -3,8 +3,25 @@ import { createHash } from 'node:crypto';
 import { NONE, LIMITS, fail, enter } from './core.mjs';
 import { WasmModule, Bytes, I32, I64, uleb } from './wasm-binary.mjs';
 import { installRuntime, NativeEntry, Tag, G } from './wasm-runtime.mjs';
+import { isComparison } from './wasm-integers.mjs';
 import { hostSpecifications, declareEffectImports, installEffectOperations, emitHandler } from './wasm-effects.mjs';
 const binary = new Map([['+', 'add'], ['-', 'sub'], ['*', 'mul'], ['/', 'div'], ['%', 'mod'], ['==', 'eq'], ['!=', 'ne'], ['<', 'lt'], ['<=', 'le'], ['>', 'gt'], ['>=', 'ge']]);
+const arithmetic = e => e?.kind === 'Unary' ? e.text === '-' :
+  e?.kind === 'Binary' && ['+', '-', '*', '/', '%'].includes(e.text);
+function numericRegions(ast, enabled) {
+  const nodes = new Set();
+  if (!enabled) return nodes;
+  // Adjacent numeric operations are the only region edges. Calls, handlers,
+  // bindings and container boundaries retain the ordinary boxed representation.
+  for (let id = 0; id < ast.nodes.length; id++) {
+    const e = ast.nodes[id];
+    if (!(arithmetic(e) || (e.kind === 'Binary' && binary.has(e.text)))) continue;
+    for (const child of e.kind === 'Unary' ? [e.a] : [e.a, e.b]) {
+      if (arithmetic(ast.nodes[child])) { nodes.add(id); nodes.add(child); }
+    }
+  }
+  return nodes;
+}
 function sourceSection(source, name) {
   if (typeof name !== 'string' || !name.isWellFormed() || Buffer.byteLength(name) > 4096 || /[\u0000-\u001f\u007f]/.test(name))
     throw new TypeError('sourceName must be a well-formed control-free string of at most 4096 UTF-8 bytes');
@@ -25,13 +42,48 @@ class StaticData {
   finish() { return Buffer.concat(this.chunks); }
 }
 export class WasmEmit {
-  depth = 0; serial = 0; sourceNodes = 0;
-  constructor(ast, inference, source, sourceName = '', effects = { operations: [], hosts: [] }, sources = null) { this.ast = ast; this.source = source; this.sourceName = sourceName; this.data = new StaticData(); this.m = new WasmModule(); this.effects = effects; this.sources = sources; this.hosts = hostSpecifications(effects); declareEffectImports(this.m, this.hosts); this.constants = { unit: this.data.add('unit', Tag.Unit), false: this.data.add('false', Tag.Bool), true: this.data.add('true', Tag.Bool, 0, 1) }; const byBinder = new Map(inference.builtins.map(b => [b.binder, b])); const used = new Set(this.ast.nodes.filter(e => e.kind === 'Var' && byBinder.has(e.binder)).map(e => e.binder)); const roots = this.runtimeRoots(); for (const binder of used) roots.add(NativeEntry[byBinder.get(binder).name]); const targets = installRuntime(this.m, this.constants, roots); this.runtimeFunctions = targets.size; this.natives = new Map([...used].map(binder => { const b = byBinder.get(binder), target = targets.get(NativeEntry[b.name]); if (target === undefined) fail(0, 'missing demanded native runtime entry', 'E_INTERNAL'); return [binder, this.data.add('native:' + b.name, Tag.Closure, 0, target)]; })); installEffectOperations(this, effects); }
-  runtimeRoots() { const roots = new Set(['tick', 'set_fuel', 'error_code', 'fuel_remaining']); if (this.effects.operations.length) for (const n of ['invoke', 'object', 'put', 'trap', 'box', 'bool', 'kind', 'integer', 'boolean']) roots.add(n); for (const e of this.ast.nodes) { if (e.kind === 'Lambda' || e.kind === 'Record' || e.kind === 'Array') { roots.add('object'); roots.add('put'); } if (e.kind === 'Call') roots.add('invoke'); if (e.kind === 'Field') roots.add('field'); if (e.kind === 'Unary') roots.add(e.text === '-' ? 'neg' : 'not'); if (e.kind === 'Binary') roots.add(e.text === '&&' || e.text === '||' ? 'boolean' : binary.get(e.text)); if (e.kind === 'If') roots.add('boolean'); } return roots; }
+  depth = 0; serial = 0; sourceNodes = 0; unboxedIntermediates = 0;
+  constructor(ast, inference, source, sourceName = '', effects = { operations: [], hosts: [] }, sources = null, optimize = true) { this.ast = ast; this.numericNodes = numericRegions(ast, optimize); this.source = source; this.sourceName = sourceName; this.data = new StaticData(); this.m = new WasmModule(); this.effects = effects; this.sources = sources; this.hosts = hostSpecifications(effects); declareEffectImports(this.m, this.hosts); this.constants = { unit: this.data.add('unit', Tag.Unit), false: this.data.add('false', Tag.Bool), true: this.data.add('true', Tag.Bool, 0, 1) }; const byBinder = new Map(inference.builtins.map(b => [b.binder, b])); const used = new Set(this.ast.nodes.filter(e => e.kind === 'Var' && byBinder.has(e.binder)).map(e => e.binder)); const roots = this.runtimeRoots(); for (const binder of used) roots.add(NativeEntry[byBinder.get(binder).name]); const targets = installRuntime(this.m, this.constants, roots, optimize); this.runtimeFunctions = targets.size; this.natives = new Map([...used].map(binder => { const b = byBinder.get(binder), target = targets.get(NativeEntry[b.name]); if (target === undefined) fail(0, 'missing demanded native runtime entry', 'E_INTERNAL'); return [binder, this.data.add('native:' + b.name, Tag.Closure, 0, target)]; })); installEffectOperations(this, effects); }
+  runtimeRoots() {
+    const roots = new Set(['tick', 'set_fuel', 'error_code', 'fuel_remaining']);
+    if (this.effects.operations.length) for (const n of ['invoke', 'object', 'put', 'trap', 'box', 'bool', 'kind', 'integer', 'boolean']) roots.add(n);
+    for (let id = 0; id < this.ast.nodes.length; id++) {
+      const e = this.ast.nodes[id];
+      if (this.numericNodes.has(id)) {
+        const name = e.kind === 'Unary' ? 'neg' : binary.get(e.text);
+        roots.add('raw:' + name); roots.add('integer'); roots.add(isComparison(name) ? 'bool' : 'box');
+      } else {
+        if (e.kind === 'Unary') roots.add(e.text === '-' ? 'neg' : 'not');
+        if (e.kind === 'Binary') roots.add(e.text === '&&' || e.text === '||' ? 'boolean' : binary.get(e.text));
+      }
+      if (e.kind === 'Lambda' || e.kind === 'Record' || e.kind === 'Array') { roots.add('object'); roots.add('put'); }
+      if (e.kind === 'Call') roots.add('invoke');
+      if (e.kind === 'Field') roots.add('field');
+      if (e.kind === 'If') roots.add('boolean');
+    }
+    return roots;
+  }
+  integerOperand(id, f, scope) {
+    if (!this.numericNodes.has(id)) { this.expression(id, f, scope); f.call('integer'); return; }
+    const e = this.ast.nodes[id]; enter(this, e.pos); this.sourceNodes++; this.unboxedIntermediates++;
+    try { f.i32(e.pos).gset(G.position).call('tick'); this.numericBody(e, f, scope); }
+    finally { this.depth--; }
+  }
+  numericBody(e, f, scope) {
+    this.integerOperand(e.a, f, scope);
+    if (e.kind === 'Binary') this.integerOperand(e.b, f, scope);
+    f.i32(e.pos).gset(G.position).call('raw:' + (e.kind === 'Unary' ? 'neg' : binary.get(e.text)));
+  }
   free(id, bound, out) { const e = this.ast.nodes[id]; enter(this, e.pos); try { if (e.kind === 'Var') { if (!bound.has(e.binder) && !this.natives.has(e.binder)) out.add(e.binder); return; } if (e.kind === 'Lambda') { bound.add(e.binder); this.free(e.a, bound, out); bound.delete(e.binder); return; } if (e.kind === 'Block') { for (const b of e.bindings) { this.free(b.expr, bound, out); bound.add(b.binder); } this.free(e.a, bound, out); for (const b of e.bindings) bound.delete(b.binder); return; } for (const child of [e.a, e.b, e.c]) if (child !== NONE) this.free(child, bound, out); for (const child of e.items) this.free(child, bound, out); for (const [, child] of e.fields) this.free(child, bound, out); } finally { this.depth--; } }
   load(binder, f, scope) { if (this.natives.has(binder)) { f.i32(this.natives.get(binder)); return; } const loc = scope.get(binder); if (!loc) fail(0, 'unresolved closure binding', 'E_INTERNAL'); if (loc.capture) f.get(0).load(16 + loc.index * 4); else f.get(loc.index); }
   object(f, tag, count, bytes) { f.i32(bytes).i32(tag).i32(count).call('object'); }
-  expression(id, f, scope) { const e = this.ast.nodes[id]; enter(this, e.pos); this.sourceNodes++; try { f.i32(e.pos).gset(G.position).call('tick'); switch (e.kind) {
+  expression(id, f, scope) { const e = this.ast.nodes[id]; enter(this, e.pos); this.sourceNodes++; try { f.i32(e.pos).gset(G.position).call('tick');
+    if (this.numericNodes.has(id)) {
+      this.numericBody(e, f, scope);
+      f.call(e.kind === 'Binary' && isComparison(binary.get(e.text)) ? 'bool' : 'box');
+      return;
+    }
+    switch (e.kind) {
     case 'Int': f.i32(this.data.integer(e.number)); break; case 'Bool': f.i32(e.number ? this.constants.true : this.constants.false); break; case 'Unit': f.i32(this.constants.unit); break; case 'Text': f.i32(this.data.text(e.text)); break; case 'Var': this.load(e.binder, f, scope); break;
     case 'Effect': f.i32(this.effectPointers.get(e.key)); break;
     case 'Host': this.expression(e.a, f, scope); f.drop().i32(this.hostPointers.get(e.effectKey)); break;
@@ -75,6 +127,6 @@ export class WasmEmit {
     const wasm = Buffer.concat([core, customSection('tt.abi', abi)]);
     if (wasm.length > LIMITS.artifactBytes) fail(0, 'Wasm artifact size limit exceeded', 'E_LIMIT');
     return { wasm, runtime_functions: this.runtimeFunctions, wasm_functions: this.m.functions.length,
-      wasm_bytes: wasm.length, static_bytes: heap, emitted_expressions: this.sourceNodes, host_imports: this.hosts.length };
+      wasm_bytes: wasm.length, static_bytes: heap, emitted_expressions: this.sourceNodes, host_imports: this.hosts.length, unboxed_intermediates: this.unboxedIntermediates };
   }
 }
