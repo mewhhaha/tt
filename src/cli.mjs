@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync, openSync, fstatSync, readSync, closeSync, writeFileSync, renameSync, unlinkSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { compile, execute, TTError } from './compiler.mjs';
 import { LIMITS, fail } from './core.mjs';
@@ -51,15 +51,19 @@ export function main(args = process.argv.slice(2)) {
     } else if (args.length !== 2 && !metrics) fail(0, 'unexpected arguments', 'E_USAGE');
     try { source = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(readInput(path, LIMITS.sourceBytes)); }
     catch (e) { if (e instanceof TTError) throw e; fail(0, 'source is not valid UTF-8', 'E_PARSE'); }
-    const c = compile(source, { emit: command !== 'check' });
+    const label = basename(path);
+    const sourceName = Buffer.byteLength(label) <= 4096 && !/[\u0000-\u001f\u007f]/.test(label) ? label : '<source>';
+    const c = compile(source, { emit: command !== 'check', sourceName });
     if (command === 'build') writeArtifact(args[3], c.wasm);
     else if (command === 'run') console.log(execute(c.wasm).output);
     else console.log(c.type);
     if (metrics) console.error(JSON.stringify(c.metrics)); return 0;
   } catch (e) {
     if (e instanceof TTError) {
-      const before = source.slice(0, e.pos), line = before.split('\n').length, column = before.length - before.lastIndexOf('\n');
-      console.error(`${path}:${line}:${column}: ${e.code}: ${e.message}`); return e.code === 'E_USAGE' ? 2 : 1;
+      const location = e.source;
+      if (location) console.error(`${location.name || path}:${location.line}:${location.column}: ${e.code}: ${e.message}`);
+      else { const before = source.slice(0, e.pos), line = before.split('\n').length, column = before.length - before.lastIndexOf('\n');
+        console.error(`${path}:${line}:${column}: ${e.code}: ${e.message}`); } return e.code === 'E_USAGE' ? 2 : 1;
     }
     console.error(`E_INTERNAL: ${e.message}`); return 1;
   }
