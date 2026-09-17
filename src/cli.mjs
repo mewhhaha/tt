@@ -3,7 +3,8 @@ import { readFileSync, openSync, fstatSync, readSync, closeSync, writeFileSync, 
 import { randomBytes } from 'node:crypto';
 import { basename, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { compile, execute, TTError } from './compiler.mjs';
+import { compile, compileProject, execute, TTError } from './compiler.mjs';
+import { fileProject } from './project-files.mjs';
 import { LIMITS, fail } from './core.mjs';
 
 export function readInput(path, max) {
@@ -35,7 +36,7 @@ export function main(args = process.argv.slice(2)) {
   let source = '', path = args[1] ?? '';
   try {
     if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { process.stdout.write(usage); return 0; }
-    if (args.length === 1 && args[0] === '--version') { console.log('tt 0.2.0 (Node.js compiler, WebAssembly-only target)'); return 0; }
+    if (args.length === 1 && args[0] === '--version') { console.log('tt 0.4.0 (Node.js compiler, WebAssembly-only target)'); return 0; }
     if (args.length < 2) { process.stderr.write(usage); return 2; }
     const command = args[0];
     if (command === 'exec') {
@@ -53,7 +54,8 @@ export function main(args = process.argv.slice(2)) {
     catch (e) { if (e instanceof TTError) throw e; fail(0, 'source is not valid UTF-8', 'E_PARSE'); }
     const label = basename(path);
     const sourceName = Buffer.byteLength(label) <= 4096 && !/[\u0000-\u001f\u007f]/.test(label) ? label : '<source>';
-    const c = compile(source, { emit: command !== 'check', sourceName });
+    const project = fileProject(path);
+    const c = compileProject(project.entry, name => name === project.entry ? source : project.read(name), { emit: command !== 'check' });
     if (command === 'build') writeArtifact(args[3], c.wasm);
     else if (command === 'run') console.log(execute(c.wasm).output);
     else console.log(c.type);

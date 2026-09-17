@@ -5,7 +5,7 @@ const wordRest = c => /[a-zA-Z_@0-9]/.test(c ?? '');
 const digit = c => c !== undefined && c >= '0' && c <= '9';
 const doubles = new Set(['=>', '->', '::', '==', '!=', '<=', '>=', '&&', '||', '..']);
 const comparisons = new Set(['<', '>', '<=', '>=', '==', '!=']);
-const reserved = new Set(['then', 'else', 'return', 'let', 'const', 'where']);
+const reserved = new Set(['then', 'else', 'return', 'let', 'const', 'where', 'with', 'in', 'effect']);
 const precedence = new Map([['||', 1], ['&&', 2], ['==', 3], ['!=', 3],
   ['<', 4], ['<=', 4], ['>', 4], ['>=', 4], ['+', 5], ['-', 5], ['*', 6], ['/', 6], ['%', 6]]);
 
@@ -43,7 +43,7 @@ export function lex(source) {
     } else {
       let text = source[i++];
       if (doubles.has(text + source[i])) text += source[i++];
-      if (!'(){}[];,:.=+-*/%<>!&|'.includes(text[0])) fail(pos, 'invalid character', 'E_PARSE');
+      if (!'(){}[];,:.=+-*/%<>!&|~'.includes(text[0])) fail(pos, 'invalid character', 'E_PARSE');
       out.push({ kind: 'punct', text, pos });
     }
     if (out.length > LIMITS.tokens) fail(pos, 'token limit exceeded', 'E_LIMIT');
@@ -51,9 +51,14 @@ export function lex(source) {
   out.push({ kind: 'end', text: '', pos: source.length }); return out;
 }
 export class Parser {
-  at = 0; depth = 0; aliases = new Map();
+  at = 0; depth = 0; aliases = new Map(); effects = new Map();
   ast = { symbols: new Symbols(), nodes: [], root: NONE };
-  constructor(source) { this.tokens = lex(source); }
+  constructor(source, { ast, moduleName = 'main.tt', offset = 0 } = {}) {
+    if (ast) this.ast = ast;
+    this.moduleName = moduleName;
+    try { this.tokens = lex(source); } catch (e) { if (typeof e.pos === 'number') e.pos += offset; throw e; }
+    for (const token of this.tokens) token.pos += offset;
+  }
   get t() { return this.tokens[this.at]; }
   is(text) { return this.t.kind !== 'string' && this.t.text === text; }
   eat(text) { if (this.is(text)) { this.at++; return true; } return false; }
@@ -128,7 +133,19 @@ export class Parser {
         if (result.kind !== 'Int' || b.kind !== 'Int') fail(this.t.pos, 'Boolean type composition supports Int predicates only', 'E_UNSUPPORTED');
         result = intContract(meet ? Ranges.intersect(result.range, b.range) : Ranges.unite(result.range, b.range));
       }
-      if (this.eat('->')) result = contract('Function', result, this.type());
+      if (this.eat('->')) {
+        result = contract('Function', result, this.type());
+        if (this.eat('~')) {
+          this.need('{'); const effects = [];
+          while (!this.eat('}')) {
+            const host = this.eat('host'), pos = this.t.pos, name = this.word(), key = this.effects.get(name);
+            if (!key) fail(pos, 'effect annotations require a preceding local effect declaration', 'E_EFFECT');
+            effects.push((host ? 'host:' : 'effect:') + key);
+            if (!this.eat(',')) { this.need('}'); break; }
+          }
+          result.effects = [...new Set(effects)];
+        }
+      }
       return result;
     } finally { this.depth--; }
   }
@@ -144,7 +161,13 @@ export class Parser {
       else if (this.t.kind === 'string') { e.kind = 'Text'; e.text = this.take().text; }
       else if (this.eat('true')) { e.kind = 'Bool'; e.number = true; }
       else if (this.eat('false')) { e.kind = 'Bool'; e.number = false; }
-      else if (this.eat('fn')) {
+      else if (this.eat('import')) {
+        if (this.t.kind !== 'string') fail(this.t.pos, 'import requires a literal relative .tt path', 'E_MODULE');
+        e.kind = 'Import'; e.text = this.take().text;
+      } else if (this.eat('host')) { e.kind = 'Host'; e.a = this.postfix(); }
+      else if (this.eat('handle')) {
+        e.kind = 'Handle'; e.a = this.postfix(); this.need('with'); e.b = this.expr(); this.need('in'); e.c = this.expr();
+      } else if (this.eat('fn')) {
         e.kind = 'Lambda'; const paren = this.eat('('); e.name = this.word();
         if (this.eat('::') || this.eat(':')) e.annotation = this.type();
         if (paren) this.need(')'); this.need('=>'); e.a = this.expr();
@@ -206,8 +229,21 @@ export class Parser {
     enter(this, this.t.pos);
     try {
       const e = { kind: 'Block', pos: this.t.pos, bindings: [] };
-      while (this.is('let') || this.is('const')) {
-        if (this.eat('const')) {
+      while (this.is('let') || this.is('const') || this.is('effect')) {
+        if (this.eat('effect')) {
+          if (!top) fail(this.t.pos, 'effects are module-level declarations', 'E_UNSUPPORTED');
+          const pos = this.t.pos, name = this.word(); this.need('::'); const annotation = this.type(); this.need(';');
+          if (annotation.kind !== 'Function' || annotation.effects?.length)
+            fail(pos, 'an effect declaration needs one operation arrow', 'E_EFFECT');
+          if (this.effects.has(name)) fail(pos, 'duplicate effect declaration', 'E_EFFECT');
+          this.ast.effectCount = (this.ast.effectCount ?? 0) + 1;
+          if (this.ast.effectCount > 1024) fail(pos, 'effect declaration limit exceeded', 'E_LIMIT');
+          const key = this.moduleName + '::' + this.ast.symbols.name(name);
+          if (Buffer.byteLength(key) > 8192) fail(pos, 'effect identity size limit exceeded', 'E_LIMIT');
+          this.effects.set(name, key);
+          e.bindings.push({ pos, name, annotation: null, binder: NONE,
+            expr: this.add({ kind: 'Effect', pos, key, contract: annotation }) });
+        } else if (this.eat('const')) {
           if (!top) fail(this.t.pos, 'type aliases are module-level in this prototype', 'E_UNSUPPORTED');
           const name = this.word(); this.need('='); const c = this.type(); this.need(';');
           if (this.aliases.has(name)) fail(this.t.pos, 'duplicate type alias', 'E_PARSE');

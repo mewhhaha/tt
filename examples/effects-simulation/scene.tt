@@ -1,0 +1,9 @@
+let Ops = import "./operations.tt";
+let Systems = import "./systems.tt";
+let advance = fn entities => do {
+  let next = map Systems.move entities;
+  let total = fold (fn sum => fn entity => sum + entity.position) 0 next;
+  let ignored = Ops.Report total;
+  return next;
+};
+return { .advance = advance; };

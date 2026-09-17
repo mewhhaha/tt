@@ -1,147 +1,119 @@
-# WebAssembly-only backend and provisional ABI 2
+# Direct Wasm backend and provisional ABI 2
 
-The compiler runs in Node.js. Its only executable output is standard Core Wasm
-(`00 61 73 6d 01 00 00 00`), using i32/i64, linear memory, structured control flow,
-a funcref table and call_indirect. No WAT assembler, native toolchain, npm package,
-WASI library, GC proposal, or host import is needed for the current pure fragment.
-`check` runs static analysis without emitting; `build` never runs the TT program;
-`run` emits and executes Wasm. There is no custom-bytecode output or interpreter.
+Node.js runs the compiler; standard Core Wasm is its only executable output.
+Pure modules require no imports, assembler, native toolchain, packages, WASI, or GC
+proposal. Explicit host-effect modules add only declared `tt.host` function imports.
+See [MODULES_EFFECTS.md](MODULES_EFFECTS.md) for the experimental extension.
 
-## Lowering
+## Lowering and exports
 
-Every source lambda becomes an ordinary Wasm function. All source functions and
-curried primitive wrappers have `(environment: i32, argument: i32) -> i32`.
-Values are linear-memory pointers. Closures hold a function-table index and an
-ordered capture vector resolved using binder IDs, never names or runtime types.
-Records, arrays and conditionals preserve left-to-right strict evaluation.
+Every source lambda and curried primitive uses `(environment:i32, argument:i32)->i32`.
+Values are boxed linear-memory pointers. Closures contain a function-table index and
+captures in checked binder order, not lexical-name or runtime-type guesses. Host
+imports precede defined functions; private table entries preserve actual function
+indices. The table is not exported. Runtime helpers are demand-linked through an
+explicit dependency graph, including future curried targets returned as values.
 
-Arithmetic and array/text operations are Wasm functions included in the artifact.
-`map` and `fold` are Wasm loops invoking generated closures. Arithmetic checks
-signed-i64 overflow before exposing a result. In particular MIN / -1 traps while
-MIN % -1 returns zero. Text length is UTF-8 byte length, not UTF-16 code units.
+Arithmetic, collections, captures, handler dispatch and source control flow execute
+inside Wasm. Checked i64 arithmetic traps on overflow; MIN/-1 traps, MIN%-1 is zero.
+Text length means UTF-8 bytes. No TT bytecode interpreter or JavaScript arithmetic
+shim implements source operations.
 
-This boxed representation deliberately prioritizes a small compositional backend.
-It does not claim unboxed optimization, optimal code size, or production runtime
-speed. Runtime helpers are linked from a finite explicit dependency graph: source
-operations and referenced native values seed the graph, and only their transitive
-helper closure is declared/emitted. Returning a curried native still retains its
-future indirect-call target even when the source does not call it immediately.
-Optimizing layouts and ownership/GC remain future work.
+Public exports remain:
 
-## Exports
+- `main: () -> i32`, returning the closed program's boxed result pointer;
+- `memory`, maximum 1,024 pages (64 MiB);
+- `set_fuel: (i64) -> ()`, setting the next invocation's nonnegative budget;
+- `error_code: () -> i32` and `fuel_remaining: () -> i64`.
 
-- `main: () -> i32`: run the closed program and return a boxed-value pointer.
-- `memory`: defined linear memory, maximum 1,024 pages (64 MiB).
-- `set_fuel: (i64) -> ()`: configure the next main call's nonnegative fuel budget.
-- `error_code: () -> i32`: zero after a successful main, otherwise a TT trap code.
-- `fuel_remaining: () -> i64`: current tick budget remaining.
+`main` resets heap cursor, source-handler globals, depth, errors, diagnostic position
+and fuel. A result pointer is invalidated by the next main invocation. No persistent
+pointer or public callable-closure ABI is provided.
 
-The module has no imports. It can be instantiated by a standard engine with `{}`.
-A module result that is a function is represented as a closure, displayed `<fn>`;
-invocation of returned closures from a host is not yet a supported public ABI.
+## Value layout
 
-## Value layout (little-endian, 8-byte aligned)
-
-Every value has a 16-byte header:
+Every value is 8-byte-aligned and has this 16-byte little-endian header:
 
 | Offset | Field |
 | --- | --- |
 | 0 | i32 tag |
 | 4 | u32 element/byte/capture count |
-| 8 | auxiliary u32 (Boolean or function-table index) |
+| 8 | auxiliary u32: Bool value or function-table index |
 | 12 | u32 aggregate nesting depth |
 
-Tag 0 is Unit, 1 Int, 2 Bool, 3 Text, 4 Array, 5 Record, 6 Closure.
-Int payload is signed i64 at offset 16. Text payload is count UTF-8 bytes at 16.
-Arrays and closure captures store count u32 pointers at 16. Records store pairs
-(label index, value pointer), each 8 bytes, at 16. Booleans use auxiliary 0 or 1.
-Unit and booleans are static constants; literal scalars/text and native closures
-are pooled. Other values use the per-run bump allocator. Values are not host
-pointers and Wasm functions do not call JavaScript to perform language operations.
+Tags: Unit=0, Int=1, Bool=2, Text=3, Array=4, Record=5, Closure=6. Int payload is i64
+at 16. Text payload is count UTF-8 bytes at 16. Arrays/captures hold count u32 pointers;
+records hold (label index, pointer) pairs, 8 bytes each. Allocations round up to an
+8-byte boundary. Runtime handler frames are ordinary internal Arrays containing a
+handler closure and previous frame. They introduce no host pointer representation.
 
-Linear-memory addresses 0..15 remain reserved and are never TT value pointers. New
-artifacts use the u32 word at offset 8 as private trap-diagnostic scratch: `main`
-clears it, and the in-Wasm trap helper stores the current source offset immediately
-before trapping. The u32 word at offset 12 is private successful-run lifetime
-scratch: `main` clears it before entering source code and writes the final bump-heap
-cursor only after the source entry returns successfully. Neither word is a public
-export or ABI metadata field; hosts should consume diagnostics/results through the
-TT loader rather than depending directly on these addresses. Older ABI-2 artifacts
-leave the lifetime word zero and continue to load.
+Addresses 0..15 are reserved. Word 8 stores the source offset associated with a trap;
+word 12 is zero until successful completion, then stores the live bump-heap endpoint.
+A failed invocation leaves word 12 zero. These are private loader conventions, not
+public exports or additional ABI metadata fields. Old ABI-2 artifacts without the
+watermark retain the previous page-bound compatibility path.
 
-`main` resets the heap cursor, call depth, error, diagnostic source position,
-lifetime watermark and remaining fuel every time. Previous result pointers are
-invalidated by the next main call. Host decoding copies out values before reuse and,
-for new artifacts, checks that static values stay within `[16, heap_start)` and
-runtime values stay within `[heap_start, live_heap_end)`. Pointers into unused grown
-memory and objects straddling the static/dynamic boundary are rejected. A trapped
-invocation leaves the live-heap watermark zero so an earlier run's lifetime is not
-advertised. Static bytes are retained; grown memory is reused. Do not mutate exported
-memory while relying on language invariants. There is no GC yet.
+## Host result ownership and checks
 
-`execute(...).metrics.heap_bytes` reports the successful invocation's dynamic bump
-allocation (`live_heap_end - heap_start`). It is not peak resident memory, retained
-live-object size, or a GC metric. Older ABI-2 artifacts have no lifetime watermark,
-so their decoder compatibility path retains the older linear-memory-page bound and
-reports `heap_bytes: null`.
+`readValue` checks static `[16, heap_start)` and current dynamic allocation ranges,
+real allocation starts, full reachable graphs including opaque closure captures,
+cycles, nesting metadata, sizes/tags/UTF-8 and work/depth bounds. Fully validated
+aggregate subgraphs are memoized; each edge still consumes work. Arrays/Records and
+backing vectors are frozen detached copies. Closures become only frozen
+`{kind:'Closure'}` markers, not callable handles or table indices.
 
-## Runtime source diagnostics
+`execute` exposes only frozen value/output/metrics/remaining_fuel. It does not retain
+or expose a Module, Instance or linear memory. `loadWasm` remains the explicit
+low-level route to a compiled module for trusted embedding. Display separately caps
+rendered UTF-8 at 16 MiB, including escaped text and multibyte record labels.
 
-Each emitted source expression records its parser source offset before its fuel tick.
-Operations that evaluate children and then enter a potentially trapping runtime helper
-restore their own offset immediately before that helper call. Higher-order runtime
-loops save the source call site around callback invocation, so a trap inside the
-callback points into the callback while a later loop/fuel failure points back to the
-`map`/`fold` call rather than to the callback's last expression.
+Metrics distinguish load (including engine compilation), instantiation, source
+execution, host decode and display. heap_bytes is successful dynamic bump allocation,
+not peak or retained-live memory. host_calls counts delegated operations; host_ms
+is nested within execute_ms, not a disjoint elapsed-time bucket.
 
-The source offset is the compiler's index into the decoded JavaScript source string,
-not a UTF-8 byte offset. New artifacts include an optional `tt.source` custom section
-with source-provenance format version 1. Its payload is: one version byte; source
-length in JavaScript code units as little-endian u32; 32 raw SHA-256 bytes over the
-UTF-8 source; a bounded UTF-8 diagnostic label; and an ordered little-endian u32
-line-start table. The loader validates the table and binary-searches it to recover
-line/column after a Wasm trap. Full source text is deliberately not embedded.
+## Metadata and diagnostics
 
-CLI `build` uses only the source basename as the diagnostic label, avoiding accidental
-absolute build-machine path leakage. The programmatic `compile` API accepts an
-explicit `sourceName`; an empty name remains valid and causes CLI `exec` to fall back
-to the artifact path for display. The source digest is an identity/integrity aid,
-not authentication. Line/column units follow the parser's JavaScript-string indexing,
-so the table remains correct when earlier source contains non-ASCII text.
+The final `tt.abi` JSON custom section has exactly schema/version/labels/heap_start/
+core_bytes/core_sha256/metadata_sha256. ABI version is 2. The metadata digest covers
+the canonical fields; the core digest covers all preceding module bytes. Labels
+are unique and the static heap boundary is aligned. Older ABI 1 is rejected.
 
-`tt.source` appears before the final `tt.abi` section and is included in `core_bytes`
-and `core_sha256`. Therefore provenance corruption is covered by the existing ABI-2
-core integrity check without changing public exports or the `tt.abi` field set. The
-loader still accepts older ABI-2 artifacts that have no `tt.source` section; those
-artifacts retain only their raw trap offset behavior. This is a bounded diagnostic
-mechanism, not DWARF or a standardized Wasm source-map format.
+Optional `tt.source` version 1 carries source length in JS code units, SHA-256 of
+UTF-8 source, bounded diagnostic name and ordered u32 line starts. Source text is
+not included. CLI uses project-relative diagnostic paths. Imported projects also
+carry integrity-covered `tt.modules` version 1 records mapping virtual source offsets
+to individual names, hashes and line tables. Saved Wasm can report imported-file
+runtime locations without the original source. Old pure modules without the optional
+sections remain valid. This is neither DWARF nor a general-purpose source map.
 
-## Artifact checks and trust
+Each expression records its source offset before its fuel tick; runtime operations
+restore their call site after evaluating children. Map/fold preserve the enclosing
+call site around callbacks. Wasm traps save their position before unreachable; host
+imports save their call site before entering external code. The loader returns
+source-positioned TT errors. Unhandled source effects use code 13; invalid host
+results use code 14. Older artifacts without position bookkeeping degrade to offset0.
 
-A final `tt.abi` custom section contains schema/version, interned label strings,
-static heap boundary, SHA-256 of preceding module bytes, and a second SHA-256 over
-the canonical metadata fields. This makes standalone CLI loading possible without
-TT source or a sidecar while detecting accidental corruption of either the Wasm
-core or host-visible label/layout metadata. ABI 2 requires the exact metadata field
-set, unique label strings, and an 8-byte-aligned static heap boundary; ABI 1 artifacts
-are rejected rather than silently reinterpreted. The loader also rejects missing
-exports, imports, unsupported schema, corrupt bytes and legacy TTBC. These digests
-are integrity checks, not signatures, authenticity proofs, or proof of typechecking.
+Optional `tt.effects` version 1 specifies exact host operation keys and scalar
+contracts, including canonical Int intervals. The loader checks the actual Wasm
+import types and names against this section, rejects unknown/non-function imports,
+requires explicit capabilities before instantiation, and rejects host modules with
+start functions. Unit has no machine parameters, Int uses i64, Bool i32, and Text
+an internal pointer/byte-length pair copied by the adapter. Results are i64/i32/void;
+generated wrappers check refined Int and Bool results. No host result pointer is
+accepted. Earlier TT loaders reject host modules instead of silently granting I/O.
 
-WebAssembly.validate and the engine validate the machine code. The host decoder
-bounds memory ranges, live-allocation regions, sizes/depths, tags, UTF-8 and cycles.
-`exec` accepts TT ABI modules, not arbitrary Wasm applications. A deliberately
-forged module can bypass its own fuel accounting, diagnostic bookkeeping, or private
-heap watermark; this is NOT an audited hostile-module sandbox. Run trusted artifacts
-only. Strong hostile-input isolation needs a separately audited boundary. ABI 2 is
-still provisional. The source-position, source-provenance and lifetime diagnostics
-did not change its public export set or metadata field schema.
+## Trust and unfinished work
 
-## Migration
+A digest is an integrity aid, not a signature or proof that TT checking occurred.
+A forged module can omit fuel, misuse memory, or forge private bookkeeping. Only
+trusted artifacts belong in the current in-process runner. The host callback Map
+is explicit authority; callbacks are trusted synchronous JavaScript and can take
+unbounded time. TT fuel does not constrain them, exceptions are not retried, and
+prior I/O is not rolled back. This is not a hostile-module sandbox.
 
-Node remains the implementation language; Wasm is the compilation target. Saved
-TTBC is unsupported, and `src/bytecode.mjs` / `src/vm.mjs` are removed. Public API:
-`compile(source).wasm`, `check(source)`, `execute(bytes)`, `run(source)`.
-There are no `encode`, `decode`, or `VM` exports. Build paths must end in `.wasm`.
-Legacy C++/Python implementation files are not permitted on current main; historical
-provenance remains in `docs/HISTORY_CPP.md`, `docs/ITERATIONS.md`, and benchmark JSON.
+The current boxed, linear-lookup, bump-allocation representation prioritizes a small
+compositional backend. It is not GC or an optimized stable runtime. Ownership,
+reclamation, async/full continuation handlers, public callable closures, cross-engine
+qualification and ABI stabilization remain open gates. The exact module/effect
+restrictions and example workflows are in MODULES_EFFECTS.md.

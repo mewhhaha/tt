@@ -60,15 +60,20 @@ export class FunctionBody extends Bytes {
   }
 }
 export class WasmModule {
-  types = []; typeIds = new Map(); functions = []; names = new Map(); exports = [];
+  types = []; typeIds = new Map(); functions = []; imports = []; names = new Map(); exports = [];
   type(params, results) {
     const key = params.join(',') + '>' + results.join(','); let id = this.typeIds.get(key);
     if (id === undefined) { id = this.types.length; this.types.push({ params, results }); this.typeIds.set(key, id); } return id;
   }
+  importFunction(name, module, field, params, results) {
+    if (this.functions.length || this.names.has(name)) throw new Error('Wasm imports must be declared first and uniquely');
+    const index = this.imports.length, type = this.type(params, results);
+    this.imports.push({ name, module, field, type, index }); this.names.set(name, index); return index;
+  }
   func(name, params = [], results = [I32]) {
     if (this.names.has(name)) throw new Error('duplicate Wasm function: ' + name);
     const f = new FunctionBody(this, name, params, results); f.type = this.type(params, results);
-    f.index = this.functions.length; this.names.set(name, f.index); this.functions.push(f); return f;
+    f.index = this.imports.length + this.functions.length; this.names.set(name, f.index); this.functions.push(f); return f;
   }
   functionId(name) { const id = this.names.get(name); if (id === undefined) throw new Error('unknown Wasm function: ' + name); return id; }
   export(name, kind, index) { this.exports.push({ name, kind, index }); }
@@ -77,14 +82,20 @@ export class WasmModule {
     const section = (id, body) => { const bytes = body instanceof Bytes ? body.finish() : body; pieces.push(Buffer.from([id, ...uleb(bytes.length)]), bytes); };
     const types = new Bytes().u(this.types.length);
     for (const t of this.types) { types.add(0x60).u(t.params.length).add(t.params).u(t.results.length).add(t.results); } section(1, types);
+    if (this.imports.length) {
+      const imports = new Bytes().u(this.imports.length);
+      for (const item of this.imports) imports.name(item.module).name(item.field).add(0).u(item.type);
+      section(2, imports);
+    }
     const funcs = new Bytes().u(this.functions.length); for (const f of this.functions) funcs.u(f.type); section(3, funcs);
-    section(4, new Bytes().u(1).add(0x70, 1).u(this.functions.length).u(this.functions.length));
+    const totalFunctions = this.functions.length + this.imports.length;
+    section(4, new Bytes().u(1).add(0x70, 1).u(totalFunctions).u(totalFunctions));
     section(5, new Bytes().u(1).add(1).u(Math.max(1, Math.ceil(heapStart / 65536))).u(1024));
     const gs = new Bytes().u(globals.length);
     for (const [type, value] of globals) gs.add(type, 1, type === I64 ? 0x42 : 0x41, sleb(value), 0x0b); section(6, gs);
     const exports = new Bytes().u(this.exports.length); for (const e of this.exports) exports.name(e.name).add(e.kind).u(e.index); section(7, exports);
-    const elements = new Bytes().u(1).add(0, 0x41, 0, 0x0b).u(this.functions.length);
-    for (const f of this.functions) elements.u(f.index); section(9, elements);
+    const elements = new Bytes().u(1).add(0, 0x41, 0, 0x0b).u(totalFunctions);
+    for (const f of [...this.imports, ...this.functions]) elements.u(f.index); section(9, elements);
     const code = new Bytes().u(this.functions.length); for (const f of this.functions) { const body = f.body(); code.u(body.length).add(body); } section(10, code);
     section(11, new Bytes().u(1).add(0, 0x41, 0, 0x0b).u(data.length).add(data));
     const out = Buffer.concat(pieces); if (out.length > LIMITS.artifactBytes) fail(0, 'Wasm artifact size limit exceeded', 'E_LIMIT'); return out;

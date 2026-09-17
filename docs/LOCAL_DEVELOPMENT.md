@@ -1,40 +1,45 @@
-# Local Node development; WebAssembly-only output
+# Local Node development; Wasm-only output
 
-Node.js 22+ is the intended compiler host; this checkpoint is tested on Node 22.16.0,
-Linux x86_64. No install step, Python, CMake, native compiler, CI download or external
-solver is needed. There are no third-party packages. Other hosts remain unqualified.
+Node22+ is intended; recorded tests currently use Node22.16.0 on Linux. No installation
+step, Python, native compiler, downloaded compiler, hosted checking or CI artifact is
+required. There are no third-party dependencies.
 
-    node src/cli.mjs check examples/refinements.tt --metrics
-    node src/cli.mjs run examples/higher_order.tt
-    node src/cli.mjs build examples/higher_order.tt -o program.wasm
-    node src/cli.mjs exec program.wasm
-    npm test
-    npm run verify
+```sh
+npm test
+npm run verify
+npm run bench -- --sizes 500,1000,2000 --samples 11
+npm run bench:runtime
+npm run bench:effects
+node src/cli.mjs run examples/effects-workflow/pure.tt
+node examples/effects-workflow/run.mjs
+node examples/effects-simulation/run.mjs 2 1
+```
 
-Without npm: `node scripts/verify.mjs`. `run` executes generated Wasm, not a source
-interpreter. Saved modules run without TT source; pure modules have no host imports.
-See WASM.md to load them using the standard engine without this repository's runner.
-The compiler is Node code, not a compiler that itself needs to be built to Wasm.
+The direct verification equivalent is `node scripts/verify.mjs`. It runs repository
+policy, syntax checking, all tests, four original examples, README execution, saved
+standalone Wasm, existing compile/runtime gates, new module/effect gates, and both
+host example runners. No install or CI step occurs. Benchmark files under local
+output paths are generated evidence, not implementation inputs.
 
-Verification checks JS syntax, tests positive/negative and generated cases, runs
-examples and README code through Wasm, verifies standalone artifacts in a clean
-process, and records separate checking/emission and engine-stage benchmarks.
-Every compile call owns its arenas; this is not yet incremental compilation.
+CLI check/run/build resolve relative source imports beneath the entry directory
+using the explicit local file provider. `compileProject` can instead consume a Map
+or caller-supplied synchronous resolver with another explicitly defined project root.
+No implicit package/network resolution exists. Host-backed execution requires a Map
+of callbacks in an embedding runner; CLI run/exec do not grant external services.
 
-Build writes are atomic through an exclusive same-directory temporary file and
-rename. Failures preserve existing outputs. The CLI refuses non-.wasm output names
-and overwriting the source path. No fsync crash-durability guarantee is made.
+Build writes use an exclusive same-directory temporary and rename, preserving an
+existing output after failure. No crash-durability/fsync guarantee is made. Output
+must end in `.wasm` and cannot overwrite the source. Compilation never runs TT code;
+run builds real Wasm and executes it. Saved modules need no original source files.
 
-    npm run bench -- --sizes 500,1000,2000 --samples 11
-    npm run bench:runtime
-    node --cpu-prof src/cli.mjs check examples/records.tt
+Profile with `node --cpu-prof src/cli.mjs check FILE.tt`. Keep startup, parsing,
+structural checking, effect summaries, refinement checking, emission, engine
+validation/compilation/instantiation, runtime, host decoding and display distinct.
+host_ms is nested inside execute_ms. Repeated engines may cache or compile lazily;
+RSS samples are not peak/live-set measurements. Never claim a general speedup from
+an incomparable historical TTBC/C++ run.
 
-Profiling changes the timing boundary. Separate Node startup, checking, emitting,
-WebAssembly.validate, Module construction, Instance construction, runtime calls,
-and result decoding. Engine code caches and lazy compilation affect repeated runs;
-never present them as cold-engine timings. RSS observations are not peak live memory.
-
-No CI result substitutes for local execution. No old C++ sanitizer result certifies
-Node or Wasm. Retained C++ source and older evidence are historical only and do not
-participate in this active workflow. Untrusted Wasm is not safe merely because it
-has plausible metadata or a fuel export: see the explicit trust limitations.
+CI is optional corroboration, never a replacement for local execution. Supported
+platform claims must follow actual tests; no previous native sanitizer result
+qualifies Node/Wasm. The current loader is not a hostile-code sandbox. All changes
+must preserve the unchanged production-readiness obligations.

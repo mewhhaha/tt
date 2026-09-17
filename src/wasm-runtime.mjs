@@ -8,6 +8,7 @@ export const Errors = Object.freeze({
   5: ['E_RUNTIME', 'invalid runtime value kind'], 6: ['E_RUNTIME', 'missing record field'],
   7: ['E_LIMIT', 'Wasm linear-memory allocation budget exhausted'], 8: ['E_LIMIT', 'execution fuel exhausted'],
   9: ['E_LIMIT', 'call depth limit exceeded'], 10: ['E_LIMIT', 'value nesting limit exceeded'],
+  13: ['E_EFFECT_UNHANDLED', 'no active handler for effect'], 14: ['E_HOST', 'host result violates its declared contract'],
   11: ['E_LIMIT', 'text size limit exceeded'], 12: ['E_RUNTIME', 'invalid execution fuel'],
 });
 const failIf = (f, code) => f.if().i32(code).call('trap').end();

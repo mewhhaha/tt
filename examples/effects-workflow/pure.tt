@@ -1,0 +1,7 @@
+let Ops = import "./operations.tt";
+let Service = import "./service.tt";
+return handle Ops.Scale with (fn ignored => 3) in
+  handle Ops.Clock with (fn ignored => 1000) in
+  handle Ops.Save with (fn total => ()) in
+  handle Ops.Emit with (fn text => ()) in
+  Service.process [{ .name = "alpha"; .value = 10; }, { .name = "beta"; .value = 20; }];

@@ -1,0 +1,8 @@
+let Ops = import "./operations.tt";
+let Service = import "./service.tt";
+// Only the host runner, not an import statement, supplies these capabilities.
+return handle Ops.Scale with (fn ignored => 3) in
+  handle Ops.Clock with host Ops.Clock in
+  handle Ops.Save with host Ops.Save in
+  handle Ops.Emit with host Ops.Emit in
+  Service.process [{ .name = "alpha"; .value = 10; }, { .name = "beta"; .value = 20; }];

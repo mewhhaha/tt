@@ -275,7 +275,7 @@ export class Refine {
     } finally { this.depth--; }
   }
   restore(changes) { for (let i = changes.length - 1; i >= 0; i--) this.env[changes[i][0]] = changes[i][1]; }
-  expression(id, expected = null, checking = false) {
+  expression(id, expected = null, checking = false, deferCheck = false) {
     const e = this.ast.nodes[id]; enter(this, e.pos);
     try {
       this.step(e.pos); if (this.unreachable) return BOTTOM;
@@ -284,6 +284,20 @@ export class Refine {
         case 'Int': out = intEvidence(Ranges.one(e.number)); break;
         case 'Bool': case 'Text': case 'Unit': break;
         case 'Var': out = this.env[e.binder]; break;
+        case 'Effect': out = evidence(e.contract); break;
+        case 'Host': this.expression(e.a); out = evidence(e.effectContract); break;
+        case 'Handle': {
+          this.expression(e.a);
+          const required = evidence(e.effectContract);
+          const handler = this.expression(e.b, required, true, true);
+          // A generic handler parameter can carry an unknown callable precondition.
+          // Retain a checked subsumption obligation rather than assuming that it
+          // accepts all operation arguments or rechecking its source body.
+          const handlerType = this.ast.nodes[e.b].type;
+          const validator = { kind: 'Function', a: required ?? { kind: 'Function', a: null, b: null }, b: null, paramType: handlerType };
+          this.applyEvidence(validator, handler, e.pos, handlerType, this.pendingCalls);
+          out = this.expression(e.c, expected, checking); break;
+        }
         case 'Lambda': {
           const domain = e.annotation ? evidence(e.annotation) : checking ? part(expected) : ANY;
           this.env[e.binder] = paramEvidence(e.binder, domain);
@@ -334,7 +348,7 @@ export class Refine {
           out = this.expression(e.a, expected, checking); break;
         default: fail(e.pos, 'unknown expression', 'E_INTERNAL');
       }
-      if (checking) this.require(out, expected, e.type, e.pos);
+      if (checking && !deferCheck) this.require(out, expected, e.type, e.pos);
       return out;
     } finally { this.depth--; }
   }

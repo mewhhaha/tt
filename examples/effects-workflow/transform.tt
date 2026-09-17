@@ -1,0 +1,7 @@
+let Ops = import "./operations.tt";
+let transform = fn rows => map (fn row => do {
+  let factor = Ops.Scale ();
+  return { .name = row.name; .value = row.value * factor; };
+}) rows;
+let total = fn rows => fold (fn sum => fn row => sum + row.value) 0 rows;
+return { .transform = transform; .total = total; };

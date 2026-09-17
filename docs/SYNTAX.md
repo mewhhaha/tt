@@ -1,4 +1,4 @@
-# Executable surface, revision 0
+# Executable surface, revision 0.4
 
 Every module ends in `return expression;`. Bindings and fields use semicolons.
 Indentation is cosmetic. Comments start with `//`.
@@ -46,5 +46,21 @@ Initial primitives:
     textLength : Text -> Int
 
 Function and row variables in displayed inferred types are compiler-generated.
-Explicit universal quantification, recursion, effects, variants, imports, tags,
-mutation/ownership, and arbitrary const computations are not in this revision.
+Explicit universal quantification, recursion, variants, tags, mutation/ownership,
+and arbitrary const computations are not in this revision.
+
+## Modules and synchronous operations
+
+```text
+let Library = import "./library.tt";
+effect Read :: Unit -> Int;
+let reader :: Unit -> Int ~ {Read} = fn ignored => Read ();
+return handle Read with (fn ignored => 42) in reader ();
+```
+
+Imports must be top-level let initializers and imported modules return export records.
+`host Read` constructs an explicitly delegated host operation; it grants no capability
+by itself. Handler/host selectors can project statically known imported operations.
+Closed arrow rows currently name preceding local declarations only. See
+[MODULES_EFFECTS.md](MODULES_EFFECTS.md) for exact initialization, handler, higher-order
+and host-boundary semantics. There is no continuation capture/resume or async syntax.

@@ -1,0 +1,6 @@
+const StepSize = Int where self >= 0 && self <= 100;
+const AxisValue = Int where self >= -1 && self <= 1;
+effect Step :: Unit -> StepSize;
+effect Axis :: Unit -> AxisValue;
+effect Report :: Int -> Unit;
+return { .Step = Step; .Axis = Axis; .Report = Report; };

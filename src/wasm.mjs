@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { NONE, LIMITS, fail, enter } from './core.mjs';
 import { WasmModule, Bytes, I32, I64, uleb } from './wasm-binary.mjs';
 import { installRuntime, NativeEntry, Tag, G } from './wasm-runtime.mjs';
+import { hostSpecifications, declareEffectImports, installEffectOperations, emitHandler } from './wasm-effects.mjs';
 const binary = new Map([['+', 'add'], ['-', 'sub'], ['*', 'mul'], ['/', 'div'], ['%', 'mod'], ['==', 'eq'], ['!=', 'ne'], ['<', 'lt'], ['<=', 'le'], ['>', 'gt'], ['>=', 'ge']]);
 function sourceSection(source, name) {
   if (typeof name !== 'string' || !name.isWellFormed() || Buffer.byteLength(name) > 4096 || /[\u0000-\u001f\u007f]/.test(name))
@@ -25,13 +26,16 @@ class StaticData {
 }
 export class WasmEmit {
   depth = 0; serial = 0; sourceNodes = 0;
-  constructor(ast, inference, source, sourceName = '') { this.ast = ast; this.source = source; this.sourceName = sourceName; this.data = new StaticData(); this.m = new WasmModule(); this.constants = { unit: this.data.add('unit', Tag.Unit), false: this.data.add('false', Tag.Bool), true: this.data.add('true', Tag.Bool, 0, 1) }; const byBinder = new Map(inference.builtins.map(b => [b.binder, b])); const used = new Set(this.ast.nodes.filter(e => e.kind === 'Var' && byBinder.has(e.binder)).map(e => e.binder)); const roots = this.runtimeRoots(); for (const binder of used) roots.add(NativeEntry[byBinder.get(binder).name]); const targets = installRuntime(this.m, this.constants, roots); this.runtimeFunctions = targets.size; this.natives = new Map([...used].map(binder => { const b = byBinder.get(binder), target = targets.get(NativeEntry[b.name]); if (target === undefined) fail(0, 'missing demanded native runtime entry', 'E_INTERNAL'); return [binder, this.data.add('native:' + b.name, Tag.Closure, 0, target)]; })); }
-  runtimeRoots() { const roots = new Set(['tick', 'set_fuel', 'error_code', 'fuel_remaining']); for (const e of this.ast.nodes) { if (e.kind === 'Lambda' || e.kind === 'Record' || e.kind === 'Array') { roots.add('object'); roots.add('put'); } if (e.kind === 'Call') roots.add('invoke'); if (e.kind === 'Field') roots.add('field'); if (e.kind === 'Unary') roots.add(e.text === '-' ? 'neg' : 'not'); if (e.kind === 'Binary') roots.add(e.text === '&&' || e.text === '||' ? 'boolean' : binary.get(e.text)); if (e.kind === 'If') roots.add('boolean'); } return roots; }
+  constructor(ast, inference, source, sourceName = '', effects = { operations: [], hosts: [] }, sources = null) { this.ast = ast; this.source = source; this.sourceName = sourceName; this.data = new StaticData(); this.m = new WasmModule(); this.effects = effects; this.sources = sources; this.hosts = hostSpecifications(effects); declareEffectImports(this.m, this.hosts); this.constants = { unit: this.data.add('unit', Tag.Unit), false: this.data.add('false', Tag.Bool), true: this.data.add('true', Tag.Bool, 0, 1) }; const byBinder = new Map(inference.builtins.map(b => [b.binder, b])); const used = new Set(this.ast.nodes.filter(e => e.kind === 'Var' && byBinder.has(e.binder)).map(e => e.binder)); const roots = this.runtimeRoots(); for (const binder of used) roots.add(NativeEntry[byBinder.get(binder).name]); const targets = installRuntime(this.m, this.constants, roots); this.runtimeFunctions = targets.size; this.natives = new Map([...used].map(binder => { const b = byBinder.get(binder), target = targets.get(NativeEntry[b.name]); if (target === undefined) fail(0, 'missing demanded native runtime entry', 'E_INTERNAL'); return [binder, this.data.add('native:' + b.name, Tag.Closure, 0, target)]; })); installEffectOperations(this, effects); }
+  runtimeRoots() { const roots = new Set(['tick', 'set_fuel', 'error_code', 'fuel_remaining']); if (this.effects.operations.length) for (const n of ['invoke', 'object', 'put', 'trap', 'box', 'bool', 'kind', 'integer', 'boolean']) roots.add(n); for (const e of this.ast.nodes) { if (e.kind === 'Lambda' || e.kind === 'Record' || e.kind === 'Array') { roots.add('object'); roots.add('put'); } if (e.kind === 'Call') roots.add('invoke'); if (e.kind === 'Field') roots.add('field'); if (e.kind === 'Unary') roots.add(e.text === '-' ? 'neg' : 'not'); if (e.kind === 'Binary') roots.add(e.text === '&&' || e.text === '||' ? 'boolean' : binary.get(e.text)); if (e.kind === 'If') roots.add('boolean'); } return roots; }
   free(id, bound, out) { const e = this.ast.nodes[id]; enter(this, e.pos); try { if (e.kind === 'Var') { if (!bound.has(e.binder) && !this.natives.has(e.binder)) out.add(e.binder); return; } if (e.kind === 'Lambda') { bound.add(e.binder); this.free(e.a, bound, out); bound.delete(e.binder); return; } if (e.kind === 'Block') { for (const b of e.bindings) { this.free(b.expr, bound, out); bound.add(b.binder); } this.free(e.a, bound, out); for (const b of e.bindings) bound.delete(b.binder); return; } for (const child of [e.a, e.b, e.c]) if (child !== NONE) this.free(child, bound, out); for (const child of e.items) this.free(child, bound, out); for (const [, child] of e.fields) this.free(child, bound, out); } finally { this.depth--; } }
   load(binder, f, scope) { if (this.natives.has(binder)) { f.i32(this.natives.get(binder)); return; } const loc = scope.get(binder); if (!loc) fail(0, 'unresolved closure binding', 'E_INTERNAL'); if (loc.capture) f.get(0).load(16 + loc.index * 4); else f.get(loc.index); }
   object(f, tag, count, bytes) { f.i32(bytes).i32(tag).i32(count).call('object'); }
   expression(id, f, scope) { const e = this.ast.nodes[id]; enter(this, e.pos); this.sourceNodes++; try { f.i32(e.pos).gset(G.position).call('tick'); switch (e.kind) {
     case 'Int': f.i32(this.data.integer(e.number)); break; case 'Bool': f.i32(e.number ? this.constants.true : this.constants.false); break; case 'Unit': f.i32(this.constants.unit); break; case 'Text': f.i32(this.data.text(e.text)); break; case 'Var': this.load(e.binder, f, scope); break;
+    case 'Effect': f.i32(this.effectPointers.get(e.key)); break;
+    case 'Host': this.expression(e.a, f, scope); f.drop().i32(this.hostPointers.get(e.effectKey)); break;
+    case 'Handle': emitHandler(this, e, f, scope); break;
     case 'Lambda': { const captures = new Set(); this.free(e.a, new Set([e.binder]), captures); const ordered = [...captures].sort((a, b) => a - b), child = this.m.func('lambda:' + this.serial++, [I32, I32]); const inner = new Map([[e.binder, { capture: false, index: 1 }]]); ordered.forEach((cap, i) => inner.set(cap, { capture: true, index: i })); this.expression(e.a, child, inner); const p = f.local(); this.object(f, Tag.Closure, ordered.length, 16 + 4 * ordered.length); f.set(p); f.get(p).i32(child.index).store(8); ordered.forEach((cap, i) => { f.get(p).i32(16 + 4 * i); this.load(cap, f, scope); f.call('put'); }); f.get(p); break; }
     case 'Call': this.expression(e.a, f, scope); this.expression(e.b, f, scope); f.i32(e.pos).gset(G.position).call('invoke'); break;
     case 'Record': case 'Array': { const fields = e.kind === 'Record' ? e.fields : e.items.map((x, i) => [i, x]); const values = fields.map(([, x]) => { this.expression(x, f, scope); const local = f.local(); f.set(local); return local; }); const record = e.kind === 'Record', width = record ? 8 : 4, p = f.local(); f.i32(e.pos).gset(G.position); this.object(f, record ? Tag.Record : Tag.Array, fields.length, 16 + width * fields.length); f.set(p); fields.forEach(([label], i) => { if (record) f.get(p).i32(label).store(16 + 8 * i); f.get(p).i32(16 + width * i + (record ? 4 : 0)).get(values[i]).call('put'); }); f.get(p); break; }
@@ -42,5 +46,35 @@ export class WasmEmit {
     case 'Block': for (const b of e.bindings) { this.expression(b.expr, f, scope); const local = f.local(); f.set(local); scope.set(b.binder, { capture: false, index: local }); } this.expression(e.a, f, scope); break;
     default: fail(e.pos, 'unsupported Wasm expression ' + e.kind, 'E_INTERNAL'); }
   } finally { this.depth--; } }
-  run() { const entry = this.m.func('entry'); this.expression(this.ast.root, entry, new Map()); const heap = this.data.size, main = this.m.func('main'), result = main.local(); main.i32(heap).gset(G.heap).i32(0).gset(G.error).i32(0).gset(G.depth).i32(0).gset(G.position).i32(8).i32(0).store().i32(12).i32(0).store().gget(G.limit).gset(G.fuel).call('entry').set(result); main.i32(12).gget(G.heap).store().get(result); for (const name of ['main', 'set_fuel', 'error_code', 'fuel_remaining']) this.m.export(name, 0, this.m.functionId(name)); this.m.export('memory', 2, 0); const machine = this.m.finish(this.data.finish(), heap, [[I32, heap], [I32, 0], [I64, 10_000_000], [I64, 10_000_000], [I32, 0], [I32, 0]]); const core = Buffer.concat([machine, sourceSection(this.source, this.sourceName)]); const abi = { schema: 'tt-wasm-abi', version: 2, labels: this.ast.symbols.names, heap_start: heap, core_bytes: core.length, core_sha256: createHash('sha256').update(core).digest('hex') }; abi.metadata_sha256 = createHash('sha256').update(Buffer.from(JSON.stringify(abi))).digest('hex'); const custom = new Bytes().name('tt.abi').add(Buffer.from(JSON.stringify(abi))).finish(); const wasm = Buffer.concat([core, Buffer.from([0, ...uleb(custom.length)]), custom]); if (wasm.length > LIMITS.artifactBytes) fail(0, 'Wasm artifact size limit exceeded', 'E_LIMIT'); return { wasm, runtime_functions: this.runtimeFunctions, wasm_functions: this.m.functions.length, wasm_bytes: wasm.length, static_bytes: heap, emitted_expressions: this.sourceNodes }; }
+  run() {
+    const entry = this.m.func('entry'); this.expression(this.ast.root, entry, new Map());
+    const heap = this.data.size, main = this.m.func('main'), result = main.local();
+    main.i32(heap).gset(G.heap).i32(0).gset(G.error).i32(0).gset(G.depth).i32(0).gset(G.position)
+      .i32(8).i32(0).store().i32(12).i32(0).store().gget(G.limit).gset(G.fuel);
+    for (const global of this.effectGlobals.values()) main.i32(this.constants.unit).gset(global);
+    main.call('entry').set(result).i32(12).gget(G.heap).store().get(result);
+    for (const name of ['main', 'set_fuel', 'error_code', 'fuel_remaining']) this.m.export(name, 0, this.m.functionId(name));
+    this.m.export('memory', 2, 0);
+    const machine = this.m.finish(this.data.finish(), heap,
+      [[I32, heap], [I32, 0], [I64, 10_000_000], [I64, 10_000_000], [I32, 0], [I32, 0],
+        ...this.effects.operations.map(() => [I32, this.constants.unit])]);
+    const customSection = (name, value) => {
+      const custom = new Bytes().name(name).add(Buffer.from(JSON.stringify(value))).finish();
+      return Buffer.concat([Buffer.from([0, ...uleb(custom.length)]), custom]);
+    };
+    const sections = [machine, sourceSection(this.source, this.sourceName)];
+    if (this.sources) sections.push(customSection('tt.modules', { version: 1, sources: this.sources.map(s => ({
+      name: s.name, start: s.start, units: s.text.length, sha256: s.sha256,
+      lines: [0, ...[...s.text.matchAll(/\n/g)].map(m => m.index + 1)],
+    })) }));
+    if (this.hosts.length) sections.push(customSection('tt.effects', { version: 1, operations: this.hosts }));
+    const core = Buffer.concat(sections);
+    const abi = { schema: 'tt-wasm-abi', version: 2, labels: this.ast.symbols.names,
+      heap_start: heap, core_bytes: core.length, core_sha256: createHash('sha256').update(core).digest('hex') };
+    abi.metadata_sha256 = createHash('sha256').update(Buffer.from(JSON.stringify(abi))).digest('hex');
+    const wasm = Buffer.concat([core, customSection('tt.abi', abi)]);
+    if (wasm.length > LIMITS.artifactBytes) fail(0, 'Wasm artifact size limit exceeded', 'E_LIMIT');
+    return { wasm, runtime_functions: this.runtimeFunctions, wasm_functions: this.m.functions.length,
+      wasm_bytes: wasm.length, static_bytes: heap, emitted_expressions: this.sourceNodes, host_imports: this.hosts.length };
+  }
 }

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { fail, LIMITS, TTError } from './core.mjs';
 import { Errors, Tag } from './wasm-runtime.mjs';
+import { readHostEffects, hostImports, readModuleSources } from './host-effects.mjs';
 const bad = message => fail(0, message, 'E_WASM');
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 function parseSource(module) {
@@ -23,6 +24,13 @@ function parseSource(module) {
 }
 function sourceLocation(source, pos) {
   if (!source || !Number.isInteger(pos) || pos < 0 || pos > source.units) return null;
+  if (source.modules) {
+    const entry = source.modules.find(s => pos >= s.start && pos <= s.start + s.units);
+    if (!entry) return null;
+    const local = pos - entry.start; let lo = 0, hi = entry.lines.length;
+    while (lo + 1 < hi) { const mid = (lo + hi) >>> 1; if (entry.lines[mid] <= local) lo = mid; else hi = mid; }
+    return { name: entry.name, sha256: entry.sha256, line: lo + 1, column: local - entry.lines[lo] + 1 };
+  }
   let lo = 0, hi = source.lines;
   while (lo + 1 < hi) { const mid = (lo + hi) >>> 1; if (source.starts.readUInt32LE(mid * 4) <= pos) lo = mid; else hi = mid; }
   const start = source.starts.readUInt32LE(lo * 4); return { name: source.name, sha256: source.sha256, line: lo + 1, column: pos - start + 1 };
@@ -31,7 +39,6 @@ function sourceLocation(source, pos) {
 export function loadWasm(input) {
   if (!(input instanceof Uint8Array) || input.length > LIMITS.artifactBytes) bad('invalid Wasm byte buffer or artifact size');
   const bytes = Buffer.from(input); let module; try { module = new WebAssembly.Module(bytes); } catch (e) { bad('invalid WebAssembly module: ' + e.message); }
-  if (WebAssembly.Module.imports(module).length) bad('TT modules must not require host imports');
   const sections = WebAssembly.Module.customSections(module, 'tt.abi'); if (sections.length !== 1) bad('missing or duplicate tt.abi section');
   let abi; try { abi = JSON.parse(utf8.decode(sections[0])); } catch { bad('invalid tt.abi metadata'); }
   const fields = ['core_bytes', 'core_sha256', 'heap_start', 'labels', 'metadata_sha256', 'schema', 'version'];
@@ -43,7 +50,7 @@ export function loadWasm(input) {
   if (createHash('sha256').update(bytes.subarray(0, abi.core_bytes)).digest('hex') !== abi.core_sha256) bad('Wasm integrity mismatch');
   const exports = WebAssembly.Module.exports(module), required = new Map([['main', 'function'], ['set_fuel', 'function'], ['error_code', 'function'], ['fuel_remaining', 'function'], ['memory', 'memory']]);
   if (exports.length !== required.size || !exports.every(e => required.get(e.name) === e.kind)) bad('incompatible Wasm exports');
-  return { bytes, module, abi, source: parseSource(module) };
+  return { bytes, module, abi, source: readModuleSources(module, parseSource(module)), hostEffects: readHostEffects(module, bytes) };
 }
 export function readValue(memory, pointer, abi) {
   const bytes = new Uint8Array(memory.buffer), view = new DataView(bytes.buffer); let visited = 0, lastNesting = 0; const active = new Set(), memo = new Map();
@@ -151,13 +158,13 @@ export function display(value, depth = 0) {
   };
   return render(value, depth);
 }
-export function execute(wasm, { fuel = 10_000_000 } = {}) {
+export function execute(wasm, { fuel = 10_000_000, host = new Map() } = {}) {
   if (!Number.isSafeInteger(fuel) || fuel < 0) throw new TypeError('fuel must be a nonnegative safe integer');
-  let start = performance.now(); const loaded = loadWasm(wasm); const load_ms = performance.now() - start; start = performance.now(); const instance = new WebAssembly.Instance(loaded.module, {}); const instantiate_ms = performance.now() - start; instance.exports.set_fuel(BigInt(fuel)); let pointer; start = performance.now();
+  let start = performance.now(); const loaded = loadWasm(wasm); const load_ms = performance.now() - start; start = performance.now(); let instance; const capabilities = hostImports(loaded, host, () => instance, sourceLocation); instance = new WebAssembly.Instance(loaded.module, capabilities.imports); const instantiate_ms = performance.now() - start; instance.exports.set_fuel(BigInt(fuel)); let pointer; start = performance.now();
   try { pointer = instance.exports.main(); } catch (e) { if (!(e instanceof WebAssembly.RuntimeError)) throw e; const known = Errors[instance.exports.error_code()]; const position = new DataView(instance.exports.memory.buffer).getUint32(8, true); const error = new TTError(known?.[0] ?? 'E_RUNTIME', position, known?.[1] ?? ('unexpected Wasm trap: ' + e.message)); error.source = sourceLocation(loaded.source, position); throw error; }
   const execute_ms = performance.now() - start; start = performance.now(); const value = readValue(instance.exports.memory, pointer, loaded.abi); const decode_ms = performance.now() - start;
   start = performance.now(); const output = display(value); const display_ms = performance.now() - start;
   const heap_end = new DataView(instance.exports.memory.buffer).getUint32(12, true), heap_bytes = heap_end ? heap_end - loaded.abi.heap_start : null;
-  const metrics = Object.freeze({ load_ms, instantiate_ms, execute_ms, decode_ms, display_ms, heap_bytes });
+  const metrics = Object.freeze({ load_ms, instantiate_ms, execute_ms, decode_ms, display_ms, heap_bytes, host_calls: capabilities.metrics.calls, host_ms: capabilities.metrics.ms });
   return Object.freeze({ value, output, metrics, remaining_fuel: instance.exports.fuel_remaining() });
 }

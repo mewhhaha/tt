@@ -1,0 +1,7 @@
+let Ops = import "./operations.tt";
+let move = fn entity => {
+  .id = entity.id;
+  .position = entity.position + entity.velocity * Ops.Step () + Ops.Axis ();
+  .velocity = entity.velocity;
+};
+return { .move = move; };

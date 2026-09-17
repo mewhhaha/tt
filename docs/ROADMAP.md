@@ -1,56 +1,58 @@
 # Research and implementation roadmap
 
-Keep this ordered by soundness and useful vertical slices, not feature count.
-Each item requires executable acceptance and rejection cases plus cost evidence.
+Order work by safety and useful vertical slices, not feature count. A passing
+prototype suite does not waive any production-readiness gate.
 
-## Next iterations
+## Current slice and immediate follow-up
 
-1. **Adversarial validation and maintainability.** Expand generated tests for
-   polymorphic rows and nested callable contracts; audit Wasm ABI/resource limits,
-   error recovery, and lifetime behavior. Improve source formatting and module
-   boundaries without adding another semantic implementation. Record any discovered
-   counterexample before repairing it.
-2. **Refinement abstraction.** Compact parameter/result evidence templates now
-   preserve identity, structural projection/packaging, and higher-order application
-   without body specialization, with substitution/variance regressions and work
-   counters. Next add deliberately bounded symbolic arithmetic and selected
-   container summaries; keep unsupported dependency shapes fail-closed. Avoid
-   arbitrary theorem proving or hidden call-site retries.
-3. **Variants and ordinary recursion.** Closed/open variant requirements,
-   construction and matching, fail-closed coverage, recursive-group inference,
-   explicit recursive datatype boundaries, and tail calls. Clarify termination vs
-   normal-return contracts. Add realistic persistent data-structure examples.
-4. **Nominal declaration evidence.** Stable keys with immutable checked metadata;
-   actual prototypes/providers stay recoverable. Equal storage shapes must not
-   merge distinct declarations. Define visibility, identity, and invalidation.
-5. **Effects.** Specify an effect-row calculus before implementation: higher-order
-   tails, joins, generalization, handler elimination, escaping effects, and one-shot
-   resumption. Do not treat every effect as an ordinary callback dictionary. Test
-   inferred system access sets and recover descriptors through declaration evidence.
-6. **Explicit staging.** Static parameters, type constructors/reflection, compile-time
-   value execution with explicit inputs and budgets, and hygienic declaration tags.
-   Ordinary function checking must remain interface-based. Rebuild a small ECS from
-   systems without manual registration or accidental capture discovery.
+Source modules now form a bounded acyclic graph with once-per-invocation dependency
+initialization, private lexical scope, returned-record exports, and preserved
+structural/refinement/effect summaries. Synchronous scoped operations can be handled
+by TT functions or explicitly bound host callbacks. The batch and simulation examples
+exercise both. This is neither separate module compilation nor a complete resumable
+effect calculus; exact restrictions are in MODULES_EFFECTS.md.
 
-## Before a stable production candidate
+1. Audit effect-summary substitution, higher-order handler contracts and module
+   boundary preservation using adversarial examples. Extend useful container/row
+   cases without silently erasing requirements or rechecking generic AST bodies.
+2. Add bounded symbolic arithmetic and container refinement summaries. Keep unknown
+   callback preconditions and normal-return guarantees distinct from performed
+   effects. Preserve measured work bounds and explicit proof-limit diagnostics.
+3. Add variants and ordinary recursion with fail-closed coverage, recursive-group
+   inference, explicit recursive datatype boundaries and tail-call considerations.
+4. Define separate checked module interfaces, static imports/type exports and
+   incremental invalidation that distinguishes interface users from static
+   implementation users. Do not call the current shared-arena graph an incremental
+   or separately compiled module system.
+5. Extend nominal declaration references with immutable real construction evidence,
+   visibility and invalidation rules. Current operation keys alone are not ECS
+   component prototypes/providers. Equal storage shapes must not merge declarations.
+6. Specify and implement general effect rows/handlers: open-tail relationships,
+   higher-order quantification, handler elimination, escape, one-shot resumption,
+   continuation ownership and async host suspension. Do not describe the current
+   returning scoped handler as that complete system.
+7. Add explicit static parameters, first-class type construction/reflection,
+   compile-time evaluation with explicit inputs/budgets, and hygienic tags. Rebuild
+   a userland ECS from bare systems without manual per-system inventories or
+   accidental physical closure capture discovery.
 
-- Modules and separate checking; first-class interface evidence; incremental
-  invalidation separating interface users from static implementation users.
-- WebAssembly is the sole output target. Extend and audit the direct Wasm backend,
-  memory management, public callable ABI, traps and runtime performance. Do not
-  introduce a native/JavaScript/TTBC target or replace compilation with interpretation.
-- Resource/ownership analysis and a documented policy for continuations, arrays,
-  cleanup, and abstraction boundaries.
-- Independent differential evaluator/model, stronger generated/property tests,
-  sustained fuzzing, reproducible builds, useful source diagnostics, documentation,
-  portability gates, and a concrete real application.
-- Matched benchmark suites for cold check/build, resident edits, memory growth,
-  specialization count, wide schemas, higher-order wrappers, proof-heavy programs,
-  and runtime execution. Do not infer whole-compiler complexity from the core solver.
+## Runtime, qualification and release
 
-## Design comparisons, not foregone conclusions
+Wasm remains the only executable target. Audit and improve allocation, ownership/GC,
+layout selection, host-callable closure handles, lifetime/release, copying, traps,
+and explicit external capability protocols. Never introduce a TT interpreter,
+JavaScript/native executable backend or CI artifact as an alternate semantic path.
 
-The refinement-first surface does not predetermine one inference kernel. Compare
-unification+rows against a minimal subtype-bound alternative under the same staging
-rules. Record which programs and annotations each admits, as well as measured work.
-Do not remove valuable abstractions simply to improve one synthetic benchmark.
+Keep structural types, value refinements, effect terms, ownership, phase availability,
+nominal identity and representation as distinct judgments. Generalize only with
+executable positive/negative tests and a recorded argument for the new boundary.
+
+Cross-platform/engine testing, sustained generated/fuzz/differential tests, reproducible
+cold/resident benchmarks, compiler and runtime memory bounds, public ABI compatibility,
+independent review, documentation and a real application beyond examples remain
+required. An external callback is trusted authority: fuel and an integrity digest
+alone are not a hostile-code sandbox or transactional I/O model.
+
+Compare unification+rows against a reduced subtype-bound core using the same programs,
+staging rules and safety obligations. Do not drop useful abstractions just to improve
+a synthetic benchmark. Do not shrink the production checklist to mark completion.

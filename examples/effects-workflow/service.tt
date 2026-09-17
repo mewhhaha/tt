@@ -1,0 +1,12 @@
+let Ops = import "./operations.tt";
+let Transform = import "./transform.tt";
+let process = fn rows => do {
+  let started = Ops.Clock ();
+  let transformed = Transform.transform rows;
+  let total = Transform.total transformed;
+  let saved = Ops.Save total;
+  let logged = Ops.Emit "batch processed";
+  let stopped = Ops.Clock ();
+  return { .rows = transformed; .total = total; .elapsed = stopped - started; };
+};
+return { .process = process; };

@@ -1,0 +1,6 @@
+// Nominal identities are owned here, shared through the diamond import graph.
+effect Scale :: Unit -> Int;
+effect Clock :: Unit -> Int;
+effect Save :: Int -> Unit;
+effect Emit :: Text -> Unit;
+return { .Scale = Scale; .Clock = Clock; .Save = Save; .Emit = Emit; };

@@ -34,6 +34,9 @@ try {
   assert.equal(run(sample[1]).output, '42'); console.log('README program passed');
   child(['benchmarks/run.mjs', '--samples', '11']);
   child(['benchmarks/wasm-runtime.mjs']);
+  child(['benchmarks/modules-effects.mjs']);
+  child(['examples/effects-workflow/run.mjs']);
+  child(['examples/effects-simulation/run.mjs', '2', '1']);
   // Run outside the source tree with PATH removed: the compiler needs only its Node runtime and source modules.
   const dir = mkdtempSync(join(tmpdir(), 'tt-standalone-'));
   try {

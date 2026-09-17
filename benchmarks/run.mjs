@@ -66,7 +66,7 @@ export function benchmark({ sizes = [500, 1000, 2000], samples = 11 } = {}) {
       for (let i = 0; i < samples; i++) {
         const start = performance.now(); const result = compile(source);
         observed += result.metrics.type_nodes + result.metrics.wasm_functions;
-        raw.push(performance.now() - start); phases.push({ parse_ms: result.metrics.parse_ms, type_ms: result.metrics.type_ms, refine_ms: result.metrics.refine_ms, emit_ms: result.metrics.emit_ms, validation_ms: result.metrics.validation_ms }); rss.push(process.memoryUsage().rss);
+        raw.push(performance.now() - start); phases.push({ parse_ms: result.metrics.parse_ms, type_ms: result.metrics.type_ms, effect_ms: result.metrics.effect_ms, refine_ms: result.metrics.refine_ms, emit_ms: result.metrics.emit_ms, validation_ms: result.metrics.validation_ms }); rss.push(process.memoryUsage().rss);
       }
       assert.ok(observed > 0); const work = compile(source).metrics; assertWork(name, size, work);
       const sorted = [...raw].sort((a, b) => a - b);
@@ -82,7 +82,7 @@ export function benchmark({ sizes = [500, 1000, 2000], samples = 11 } = {}) {
     node_binary_sha256: sha(readFileSync(process.execPath)),
     platform: platform(), arch: arch(), kernel: release(), cpu: cpus()[0]?.model, logical_cpus: cpus().length,
     source_sha256: before,
-    boundary: 'in-process parse+infer+refine+Wasm binary emission+WebAssembly.validate+type display; phases separately recorded; excludes source generation, startup, engine compilation/instantiation and runtime execution; includes incidental GC, not forced final collection',
+    boundary: 'in-process parse+infer+effect summaries+refine+Wasm binary emission+WebAssembly.validate+type display; phases separately recorded; excludes source generation, startup, engine compilation/instantiation and runtime execution; includes incidental GC, not forced final collection',
     parity: 'each workload executes at size 20 before timing; large wrapper artifacts can exceed Wasm call/value nesting limits and are compiler-only workloads',
     claims: 'Local observations and deterministic work regressions, not production qualification or a matched speedup over the archived C++ implementation. RSS snapshots are not peak/live-set measurements.',
     reports,

@@ -213,6 +213,13 @@ export class Infer {
           const s = this.lookup(e.name, e.pos); e.binder = s.binder;
           out = s.polymorphic ? t.instantiate(s.type, s.cutoff, level) : s.type; break;
         }
+        case 'Import': fail(e.pos, 'imports require compileProject or the file CLI', 'E_MODULE'); break;
+        case 'Effect': out = t.from(e.contract, level); break;
+        case 'Host': out = this.expression(e.a, level); break;
+        case 'Handle': {
+          const op = this.expression(e.a, level), handler = this.expression(e.b, level);
+          t.unify(op, handler, e.pos); out = this.expression(e.c, level); break;
+        }
         case 'Lambda': {
           const param = e.annotation ? t.from(e.annotation, level) : t.fresh(level);
           e.paramType = param; e.binder = this.nextBinder++;
@@ -245,7 +252,9 @@ export class Infer {
             b.binder = this.nextBinder++;
             this.env.at(-1).set(b.name, { type, binder: b.binder, cutoff: level, polymorphic: t.polymorphic(type, level) });
           }
-          out = this.expression(e.a, level); this.env.pop(); break;
+          out = this.expression(e.a, level); this.env.pop();
+          if (e.moduleExport && t.nodes[t.find(out)].kind !== 'Record') fail(e.pos, 'imported modules must return an export record', 'E_MODULE');
+          break;
         }
         default: fail(e.pos, 'unknown expression', 'E_INTERNAL');
       }
