@@ -46,7 +46,7 @@ export function loadWasm(input) {
   return { bytes, module, abi, source: parseSource(module) };
 }
 export function readValue(memory, pointer, abi) {
-  const bytes = new Uint8Array(memory.buffer), view = new DataView(bytes.buffer); let visited = 0; const active = new Set();
+  const bytes = new Uint8Array(memory.buffer), view = new DataView(bytes.buffer); let visited = 0, lastNesting = 0; const active = new Set();
   const heapEnd = bytes.length >= 16 ? view.getUint32(12, true) : 0;
   if (heapEnd && (heapEnd < abi.heap_start || heapEnd > bytes.length || heapEnd % 8 !== 0)) bad('invalid live heap boundary');
   const dynamicEnd = heapEnd || bytes.length;
@@ -55,7 +55,37 @@ export function readValue(memory, pointer, abi) {
     const staticValue = p < abi.heap_start, end = staticValue ? abi.heap_start : dynamicEnd;
     if (p + size > end) bad(staticValue ? 'result crosses static heap boundary' : 'result points outside live heap');
   };
-  const read = (p, depth) => { if (++visited > 1_000_000 || depth > 128) fail(0, 'result decoding limit exceeded', 'E_LIMIT'); bounds(p, 16); if (p % 8) bad('unaligned result'); if (active.has(p)) bad('cyclic result'); const tag = view.getUint32(p, true), len = view.getUint32(p + 4, true); if (tag === Tag.Unit) return null; if (tag === Tag.Int) { bounds(p, 24); return view.getBigInt64(p + 16, true); } if (tag === Tag.Bool) { const b = view.getUint32(p + 8, true); if (b > 1) bad('invalid Boolean result'); return !!b; } if (tag === Tag.Text) { if (len > LIMITS.sourceBytes) bad('oversized text result'); bounds(p, 16 + len); try { return utf8.decode(bytes.subarray(p + 16, p + 16 + len)); } catch { bad('invalid UTF-8 result'); } } if (tag === Tag.Closure) return { kind: 'Closure' }; if (tag !== Tag.Record && tag !== Tag.Array) bad('unknown result tag'); if (len > 1_000_000) bad('oversized aggregate result'); bounds(p, 16 + len * (tag === Tag.Record ? 8 : 4)); active.add(p); try { if (tag === Tag.Array) { const values = []; for (let i = 0; i < len; i++) values.push(read(view.getUint32(p + 16 + i * 4, true), depth + 1)); return { kind: 'Array', values }; } const labels = [], values = [], seen = new Set(); for (let i = 0; i < len; i++) { const label = view.getUint32(p + 16 + i * 8, true); if (label >= abi.labels.length || seen.has(label)) bad('invalid record label'); seen.add(label); labels.push(abi.labels[label]); values.push(read(view.getUint32(p + 20 + i * 8, true), depth + 1)); } return { kind: 'Record', labels, values }; } finally { active.delete(p); } };
+  const read = (p, depth) => {
+    if (++visited > 1_000_000 || depth > 128) fail(0, 'result decoding limit exceeded', 'E_LIMIT');
+    bounds(p, 16); if (active.has(p)) bad('cyclic result');
+    const tag = view.getUint32(p, true), len = view.getUint32(p + 4, true);
+    if (tag === Tag.Unit) { if (len) bad('invalid Unit result header'); lastNesting = 0; return null; }
+    if (tag === Tag.Int) { if (len) bad('invalid Int result header'); bounds(p, 24); lastNesting = 0; return view.getBigInt64(p + 16, true); }
+    if (tag === Tag.Bool) { const b = view.getUint32(p + 8, true); if (len || b > 1) bad('invalid Boolean result'); lastNesting = 0; return !!b; }
+    if (tag === Tag.Text) { if (len > LIMITS.sourceBytes) bad('oversized text result'); bounds(p, 16 + len); try { const value = utf8.decode(bytes.subarray(p + 16, p + 16 + len)); lastNesting = 0; return value; } catch { bad('invalid UTF-8 result'); } }
+    if (tag !== Tag.Record && tag !== Tag.Array && tag !== Tag.Closure) bad('unknown result tag');
+    if (len > 1_000_000) bad('oversized aggregate result');
+    const aux = view.getUint32(p + 8, true), declaredDepth = view.getUint32(p + 12, true); if (declaredDepth > 128) bad('invalid result nesting metadata'); if (tag !== Tag.Closure && aux) bad('invalid aggregate result header');
+    const width = tag === Tag.Record ? 8 : 4; bounds(p, 16 + len * width); active.add(p);
+    try {
+      let nesting = 0;
+      const child = (q, nextDepth) => { const value = read(q, nextDepth); nesting = Math.max(nesting, lastNesting + 1); return value; };
+      if (tag === Tag.Closure) {
+        for (let i = 0; i < len; i++) child(view.getUint32(p + 16 + i * 4, true), depth + 1);
+        if (declaredDepth !== nesting) bad('invalid result nesting metadata'); lastNesting = nesting; return { kind: 'Closure' };
+      }
+      if (tag === Tag.Array) {
+        const values = []; for (let i = 0; i < len; i++) values.push(child(view.getUint32(p + 16 + i * 4, true), depth + 1));
+        if (declaredDepth !== nesting) bad('invalid result nesting metadata'); lastNesting = nesting; return { kind: 'Array', values };
+      }
+      const labels = [], values = [], seen = new Set();
+      for (let i = 0; i < len; i++) {
+        const label = view.getUint32(p + 16 + i * 8, true); if (label >= abi.labels.length || seen.has(label)) bad('invalid record label'); seen.add(label); labels.push(abi.labels[label]);
+        values.push(child(view.getUint32(p + 20 + i * 8, true), depth + 1));
+      }
+      if (declaredDepth !== nesting) bad('invalid result nesting metadata'); lastNesting = nesting; return { kind: 'Record', labels, values };
+    } finally { active.delete(p); }
+  };
   return read(pointer >>> 0, 0);
 }
 export function display(value, depth = 0) { if (depth > 64) return '...'; if (value === null) return '()'; if (typeof value === 'bigint' || typeof value === 'boolean') return String(value); if (typeof value === 'string') return '"' + value.replace(/[\n\r\t"\\]/g, c => ({ '\n': '\\n', '\r': '\\r', '\t': '\\t', '"': '\\"', '\\': '\\\\' })[c]) + '"'; if (value.kind === 'Closure') return '<fn>'; if (value.kind === 'Array') return '[' + value.values.map(x => display(x, depth + 1)).join(', ') + ']'; if (value.kind === 'Record') return '{ ' + value.values.map((x, i) => `.${value.labels[i]} = ${display(x, depth + 1)}; `).join('') + '}'; bad('invalid decoded result'); }
