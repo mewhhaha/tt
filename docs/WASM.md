@@ -59,10 +59,36 @@ Unit and booleans are static constants; literal scalars/text and native closures
 are pooled. Other values use the per-run bump allocator. Values are not host
 pointers and Wasm functions do not call JavaScript to perform language operations.
 
-`main` resets the heap cursor, call depth, error and remaining fuel every time.
-Previous result pointers are invalidated by the next main call. Host decoding copies
-out values before reuse. Static bytes are retained; grown memory is reused. Do not
-mutate exported memory while relying on language invariants. There is no GC yet.
+Linear-memory addresses 0..15 remain reserved and are never TT value pointers. New
+artifacts use the u32 word at offset 8 as private trap-diagnostic scratch: `main`
+clears it, and the in-Wasm trap helper stores the current source offset immediately
+before trapping. This word is intentionally not a new public export or metadata
+field; hosts should consume diagnostics through the TT loader rather than depending
+on that private address. Older ABI-2 artifacts leave the word zero and continue to
+load, so their runtime failures simply have no recovered source offset.
+
+`main` resets the heap cursor, call depth, error, diagnostic source position and
+remaining fuel every time. Previous result pointers are invalidated by the next main
+call. Host decoding copies out values before reuse. Static bytes are retained; grown
+memory is reused. Do not mutate exported memory while relying on language invariants.
+There is no GC yet.
+
+## Runtime source diagnostics
+
+Each emitted source expression records its parser source offset before its fuel tick.
+Operations that evaluate children and then enter a potentially trapping runtime helper
+restore their own offset immediately before that helper call. Higher-order runtime
+loops save the source call site around callback invocation, so a trap inside the
+callback points into the callback while a later loop/fuel failure points back to the
+`map`/`fold` call rather than to the callback's last expression.
+
+The source offset is the compiler's index into the decoded JavaScript source string,
+not a UTF-8 byte offset. The CLI `run` path still owns the original source and maps
+that offset to line/column, including when preceding source contains non-ASCII text.
+A standalone `.wasm` does not embed source text, path identity or a general source
+map; artifact-only `exec` can classify the trap and retain the raw offset internally,
+but reconstructing file/line text requires external source provenance. This is a
+bounded diagnostic mechanism, not DWARF or a standardized Wasm source-map format.
 
 ## Artifact checks and trust
 
@@ -79,11 +105,10 @@ are integrity checks, not signatures, authenticity proofs, or proof of typecheck
 WebAssembly.validate and the engine validate the machine code. The host decoder
 bounds memory ranges, sizes/depths, tags, UTF-8 and cycles. `exec` accepts TT ABI
 modules, not arbitrary Wasm applications. A deliberately forged module can bypass
-its own fuel accounting; this is NOT an audited hostile-module sandbox. Run trusted
-artifacts only. Strong hostile-input isolation needs a separately audited boundary.
-Runtime TT diagnostics currently identify the error class, not an exact source
-instruction; source maps and a future stable public ABI remain open work. ABI 2 is
-still provisional and intentionally makes the ABI 1 compatibility break explicit.
+its own fuel accounting or diagnostic bookkeeping; this is NOT an audited
+hostile-module sandbox. Run trusted artifacts only. Strong hostile-input isolation
+needs a separately audited boundary. ABI 2 is still provisional. The source-position
+diagnostic did not change its metadata schema or public export set.
 
 ## Migration
 
