@@ -2,11 +2,12 @@ import { MIN, MAX, LIMITS, Ranges, comparison, fail, enter } from './core.mjs';
 
 // null means the full *structural type at this occurrence*, not untyped top.
 export const intEvidence = range => range.full ? null : { kind: 'Integer', range };
-export function pairEvidence(kind, a, b = null, binder = null, paramType = null) {
-  if (kind === 'Function' && !a && !b) return null;
+export function pairEvidence(kind, a, b = null, binder = null, paramType = null, calls = []) {
+  if (kind === 'Function' && !a && !b && !calls.length) return null;
   const out = { kind, a, b };
   if (kind === 'Function' && binder !== null) out.binder = binder;
   if (kind === 'Function' && paramType !== null) out.paramType = paramType;
+  if (kind === 'Function' && calls.length) out.calls = calls;
   return out;
 }
 const BOTTOM = Object.freeze({ kind: 'Bottom' });
@@ -34,7 +35,7 @@ export function evidence(c) {
   }
 }
 export class Refine {
-  depth = 0; unreachable = false;
+  depth = 0; unreachable = false; pendingCalls = [];
   constructor(ast, types, inference) {
     this.ast = ast; this.types = types; this.env = new Array(inference.nextBinder).fill(null);
     for (const b of inference.builtins) if (b.name === 'length' || b.name === 'textLength')
@@ -52,7 +53,10 @@ export class Refine {
         case 'Param': return a.binder === b.binder && this.same(a.base, b.base);
         case 'Project': return a.name === b.name && this.same(a.source, b.source) && this.same(a.base, b.base);
         case 'Apply': return a.type === b.type && this.same(a.fn, b.fn) && this.same(a.arg, b.arg) && this.same(a.required, b.required) && this.same(a.base, b.base);
-        case 'Array': case 'Function': return this.same(a.a, b.a) && this.same(a.b, b.b);
+        case 'Array': return this.same(a.a, b.a) && this.same(a.b, b.b);
+        case 'Function': return this.same(a.a, b.a) && this.same(a.b, b.b) &&
+          (a.calls?.length ?? 0) === (b.calls?.length ?? 0) &&
+          (a.calls ?? []).every((call, i) => this.same(call, b.calls[i]));
         case 'Record':
           if ((a.fields?.size ?? 0) !== (b.fields?.size ?? 0)) return false;
           for (const [n, v] of a.fields) if (!b.fields.has(n) || !this.same(v, b.fields.get(n))) return false;
@@ -61,35 +65,40 @@ export class Refine {
       }
     } finally { this.depth--; }
   }
-  substitute(value, binder, argument, pos) {
+  substitute(value, binder, argument, pos, pending = []) {
     if (!value || bottom(value)) return value;
     this.step(pos); this.types.metrics.refinement_substitutions++;
     switch (value.kind) {
       case 'Integer': case 'Any': return value;
       case 'Param': return value.binder === binder ? argument : value;
       case 'Project': {
-        const source = this.substitute(value.source, binder, argument, pos);
+        const source = this.substitute(value.source, binder, argument, pos, pending);
         return field(source, value.name);
       }
       case 'Apply': {
-        const fn = this.substitute(value.fn, binder, argument, pos);
-        const arg = this.substitute(value.arg, binder, argument, pos);
-        return this.applyEvidence(fn, arg, pos, value.type);
+        const fn = this.substitute(value.fn, binder, argument, pos, pending);
+        const arg = this.substitute(value.arg, binder, argument, pos, pending);
+        return this.applyEvidence(fn, arg, pos, value.type, pending);
       }
-      case 'Array': return pairEvidence('Array', this.substitute(value.a, binder, argument, pos));
+      case 'Array': return pairEvidence('Array', this.substitute(value.a, binder, argument, pos, pending));
       case 'Function': {
-        const domain = this.substitute(value.a, binder, argument, pos);
-        const result = this.substitute(value.b, binder, argument, pos);
-        return this.functionEvidence(domain, result, value.binder ?? null, value.paramType ?? null, pos);
+        // The returned closure's obligations belong to its future body, not the
+        // enclosing invocation which merely constructs it.
+        const inner = [];
+        const domain = this.substitute(value.a, binder, argument, pos, inner);
+        // A directly returned call is already instantiated through the result.
+        for (const call of value.calls ?? []) if (call !== value.b) this.substitute(call, binder, argument, pos, inner);
+        const result = this.substitute(value.b, binder, argument, pos, inner);
+        return this.functionEvidence(domain, result, value.binder ?? null, value.paramType ?? null, pos, inner);
       }
       case 'Record': return { kind: 'Record', fields: new Map([...value.fields]
-        .map(([n, v]) => [n, this.substitute(v, binder, argument, pos)])) };
+        .map(([n, v]) => [n, this.substitute(v, binder, argument, pos, pending)])) };
       default: return value;
     }
   }
   collectDirectRequirements(value, binder, out, seen = new Set()) {
     if (!value || bottom(value) || seen.has(value)) return;
-    seen.add(value);
+    seen.add(value); this.step(0);
     if (value.kind === 'Apply' && value.required && value.arg?.kind === 'Param' && value.arg.binder === binder) out.push({ required: value.required, type: value.type });
     switch (value.kind) {
       case 'Project': this.collectDirectRequirements(value.source, binder, out, seen); break;
@@ -115,38 +124,63 @@ export class Refine {
       .map(([n, ty]) => [n, this.meetRequirements(field(a, n), field(b, n), ty, pos)])) };
     fail(pos, 'dependent callable requirements need an explicit common contract', 'E_REFINEMENT_JOIN');
   }
-  functionEvidence(domain, result, binder, paramType, pos) {
+  functionEvidence(domain, result, binder, paramType, pos, calls = []) {
     if (binder !== null && paramType !== null) {
-      const requirements = []; this.collectDirectRequirements(result, binder, requirements);
+      const requirements = [], seen = new Set(); this.collectDirectRequirements(result, binder, requirements, seen);
+      for (const call of calls) this.collectDirectRequirements(call, binder, requirements, seen);
       for (const entry of requirements) {
         const requirementType = entry.type ?? paramType;
         domain = this.meetRequirements(domain, entry.required, requirementType, pos);
         if (requirementType !== null && this.types.nodes[this.types.find(paramType)].kind === 'Var') paramType = requirementType;
       }
     }
-    return pairEvidence('Function', domain, result, binder, paramType);
+    return pairEvidence('Function', domain, result, binder, paramType, [...new Set(calls)]);
   }
-  applyEvidence(fn, argument, pos, argType = null) {
+  applyEvidence(fn, argument, pos, argType = null, pending = []) {
     if (!fn) return null;
     if (fn.kind === 'Function') {
       const required = part(fn), requirementType = fn.paramType ?? argType;
       if (required && requirementType !== null && !this.entails(argument, required, requirementType, pos)) {
         if (symbolic(argument)) {
           const base = fn.binder === undefined ? fn.b ?? null : this.substitute(fn.b, fn.binder, fallback(argument), pos);
-          return { kind: 'Apply', fn, arg: argument, required, type: requirementType, base };
+          const call = { kind: 'Apply', fn, arg: argument, required, type: requirementType, base };
+          pending.push(call); return call;
         }
         this.require(argument, required, requirementType, pos);
       }
-      return fn.binder === undefined ? fn.b ?? null : this.substitute(fn.b, fn.binder, argument, pos);
+      if (fn.binder === undefined) return fn.b ?? null;
+      for (const call of fn.calls ?? []) if (call !== fn.b) this.substitute(call, fn.binder, argument, pos, pending);
+      return this.substitute(fn.b, fn.binder, argument, pos, pending);
     }
     if (symbolic(fn)) {
       const base = fallback(fn);
       let result = null, required = part(base);
       if (base?.kind === 'Function') result = base.binder === undefined
         ? base.b ?? null : this.substitute(base.b, base.binder, fallback(argument), pos);
-      return { kind: 'Apply', fn, arg: argument, required, type: argType, base: result };
+      const call = { kind: 'Apply', fn, arg: argument, required, type: argType, base: result };
+      // ANY means the generic caller may later supply a refined callable. null
+      // instead means a checked full structural arrow, with no precondition.
+      if (unknownEvidence(fn) || (required && required !== ANY &&
+          (argType === null || !this.entails(argument, required, argType, pos)))) pending.push(call);
+      return call;
     }
     return null;
+  }
+  functionEntails(actual, required, type, pos) {
+    const domain = part(required);
+    if (!this.entails(domain, part(actual), type.a, pos)) return false;
+    const fn = fallback(actual), pending = [];
+    let result = part(actual, true);
+    try {
+      if (fn?.binder !== undefined) {
+        for (const call of fn.calls ?? []) if (call !== fn.b) this.substitute(call, fn.binder, domain, pos, pending);
+        result = this.substitute(fn.b, fn.binder, domain, pos, pending);
+      }
+    } catch (error) {
+      if (error.code === 'E_REFINEMENT') return false;
+      throw error; // Never convert a resource limit into successful evidence.
+    }
+    return pending.length === 0 && this.entails(result, part(required, true), type.b, pos);
   }
   entails(actual, required, type, pos) {
     enter(this, pos);
@@ -156,10 +190,14 @@ export class Refine {
       const t = this.types.nodes[this.types.find(type)];
       if (required === ANY) return true;
       if (t.kind === 'Function' && unknownEvidence(actual)) return false;
+      // A stored generic call may retain its original open shape ID after a
+      // let-instantiation. Scalar evidence is already checked independently of
+      // that ID; it cannot grant a new structural operation.
+      if (t.kind === 'Var' && required?.kind === 'Integer')
+        return ranges(actual).subset(required.range);
       switch (t.kind) {
         case 'Int': return ranges(actual).subset(ranges(required));
-        case 'Function': return this.entails(part(required), part(actual), t.a, pos) &&
-          this.entails(part(actual, true), part(required, true), t.b, pos);
+        case 'Function': return this.functionEntails(actual, required, t, pos);
         case 'Array': return this.entails(part(actual), part(required), t.a, pos);
         case 'Record': {
           for (const [n, ty] of this.types.flatten(t.a, pos).fields)
@@ -188,6 +226,8 @@ export class Refine {
         case 'Record': return { kind: 'Record', fields: new Map([...this.types.flatten(t.a, pos).fields]
           .map(([n, ty]) => [n, this.join(field(a, n), field(b, n), ty, pos)])) };
         case 'Function':
+          if (a?.calls?.length || b?.calls?.length)
+            fail(pos, 'joining deferred call requirements needs a common explicit contract', 'E_REFINEMENT_JOIN');
           if (this.same(part(a), part(b))) return pairEvidence('Function', part(a), this.join(part(a, true), part(b, true), t.b, pos));
           if (this.entails(a, null, type, pos) && this.entails(b, null, type, pos)) return null;
           fail(pos, 'joining different callable preconditions needs a common explicit contract', 'E_REFINEMENT_JOIN');
@@ -247,15 +287,19 @@ export class Refine {
         case 'Lambda': {
           const domain = e.annotation ? evidence(e.annotation) : checking ? part(expected) : ANY;
           this.env[e.binder] = paramEvidence(e.binder, domain);
-          const result = this.expression(e.a, checking ? part(expected, true) : null, checking);
-          out = this.functionEvidence(domain, result, e.binder, e.paramType, e.pos); break;
+          const outer = this.pendingCalls; this.pendingCalls = [];
+          try {
+            const result = this.expression(e.a, checking ? part(expected, true) : null, checking);
+            out = this.functionEvidence(domain, result, e.binder, e.paramType, e.pos, this.pendingCalls);
+          } finally { this.pendingCalls = outer; }
+          break;
         }
         case 'Call': {
           const f = this.expression(e.a), required = part(f), contextual = required !== ANY;
           const a = this.expression(e.b, contextual ? required : null, contextual);
           const ft = this.types.nodes[this.types.find(this.ast.nodes[e.a].type)];
           if (contextual) this.require(a, required, ft.a, e.pos);
-          out = this.applyEvidence(f, a, e.pos, ft.a); break;
+          out = this.applyEvidence(f, a, e.pos, ft.a, this.pendingCalls); break;
         }
         case 'Record': out = { kind: 'Record', fields: new Map(e.fields.map(([n, x]) => [n, this.expression(x, field(expected, n), checking)])) }; break;
         case 'Field': out = field(this.expression(e.a), e.name); break;
@@ -294,5 +338,9 @@ export class Refine {
       return out;
     } finally { this.depth--; }
   }
-  run() { return this.expression(this.ast.root); }
+  run() {
+    const result = this.expression(this.ast.root);
+    if (this.pendingCalls.length) fail(0, 'unresolved call requirements at module boundary', 'E_REFINEMENT');
+    return result;
+  }
 }
