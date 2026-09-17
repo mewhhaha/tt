@@ -1,0 +1,83 @@
+{
+  "node": "v22.16.0",
+  "v8": "12.4.254.21-node.26",
+  "platform": "linux x64",
+  "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+  "samples": 11,
+  "hashes": {
+    "before": "6febe3994d4041f2352bac3065936d9e6186bc4d7fee7a9f8c4bda82f9c04769",
+    "after": "39a1f668a11ac412b8cf391fd8ef5e4f99c28a8de9a9fc9a41114057386bde23"
+  },
+  "cases": {
+    "flat-20000": {
+      "before_ms": [
+        1.3387129999999985,
+        2.8044189999999958,
+        1.4079140000000052,
+        3.188489000000004,
+        1.369247999999999,
+        2.8251889999999946,
+        1.4544830000000104,
+        5.600203999999991,
+        1.5531399999999849,
+        1.6861389999999972,
+        2.780772000000013
+      ],
+      "after_ms": [
+        5.018275000000003,
+        1.658259000000001,
+        1.5283100000000047,
+        1.5972780000000029,
+        1.6774980000000141,
+        1.793153999999987,
+        1.7591360000000122,
+        1.3821800000000053,
+        1.5381929999999784,
+        1.4126929999999902,
+        3.4100819999999885
+      ],
+      "before_median_ms": 1.6861389999999972,
+      "after_median_ms": 1.658259000000001
+    },
+    "shared-1000x200": {
+      "before_ms": [
+        18.72300899999999,
+        15.973302999999987,
+        20.95580000000001,
+        16.474009000000024,
+        20.223465999999974,
+        17.544782999999995,
+        22.422371,
+        19.29708199999999,
+        24.646853999999962,
+        19.708654000000024,
+        21.718545000000006
+      ],
+      "after_ms": [
+        0.5460059999999771,
+        0.5532989999999813,
+        0.30050699999998187,
+        0.28391499999997905,
+        0.29955300000000307,
+        0.3110319999999547,
+        0.36217899999996916,
+        0.293707999999981,
+        0.08465400000000045,
+        0.4389590000000112,
+        0.08489499999996042
+      ],
+      "before_median_ms": 19.708654000000024,
+      "after_median_ms": 0.30050699999998187
+    }
+  },
+  "repository": {
+    "main_before": "c068088f6d26101d7bb13e3a54be99b899717ab3",
+    "wasm_host_git_blob_before": "196240a913f6f5dd8a10395d185acc5645cedcf3",
+    "wasm_host_git_blob_after": "67a888725867958141e7fe4b71b69f379e96e313"
+  },
+  "method": "11 alternating before/after in-process samples after three warmups per workload; host readValue only, excluding Wasm validation/instantiation/execution/display",
+  "workloads": {
+    "flat-20000": "one dynamic Array with 20,000 distinct boxed Int children; 20,001 aggregate/scalar visits",
+    "shared-1000x200": "one root Array with 200 edges to the same 1,000-Int Array; before re-decodes the shared subtree for each edge, after memoizes completed aggregate nodes"
+  }
+}

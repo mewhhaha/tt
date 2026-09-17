@@ -46,7 +46,7 @@ export function loadWasm(input) {
   return { bytes, module, abi, source: parseSource(module) };
 }
 export function readValue(memory, pointer, abi) {
-  const bytes = new Uint8Array(memory.buffer), view = new DataView(bytes.buffer); let visited = 0, lastNesting = 0; const active = new Set();
+  const bytes = new Uint8Array(memory.buffer), view = new DataView(bytes.buffer); let visited = 0, lastNesting = 0; const active = new Set(), memo = new Map();
   if (!Number.isInteger(abi?.heap_start) || abi.heap_start < 16 || abi.heap_start > bytes.length || abi.heap_start % 8) bad('invalid static heap boundary');
   const heapEnd = bytes.length >= 16 ? view.getUint32(12, true) : 0;
   if (heapEnd && (heapEnd < abi.heap_start || heapEnd > bytes.length || heapEnd % 8 !== 0)) bad('invalid live heap boundary');
@@ -93,6 +93,7 @@ export function readValue(memory, pointer, abi) {
     if (tag === Tag.Bool) { const b = view.getUint32(p + 8, true); if (len || b > 1) bad('invalid Boolean result'); lastNesting = 0; return !!b; }
     if (tag === Tag.Text) { if (len > LIMITS.sourceBytes) bad('oversized text result'); bounds(p, 16 + len); try { const value = utf8.decode(bytes.subarray(p + 16, p + 16 + len)); lastNesting = 0; return value; } catch { bad('invalid UTF-8 result'); } }
     if (tag !== Tag.Record && tag !== Tag.Array && tag !== Tag.Closure) bad('unknown result tag');
+    const cached = memo.get(p); if (cached) { lastNesting = cached.nesting; return cached.value; }
     if (len > 1_000_000) bad('oversized aggregate result');
     const aux = view.getUint32(p + 8, true), declaredDepth = view.getUint32(p + 12, true); if (declaredDepth > 128) bad('invalid result nesting metadata'); if (tag !== Tag.Closure && aux) bad('invalid aggregate result header');
     const width = tag === Tag.Record ? 8 : 4; bounds(p, 16 + len * width); active.add(p);
@@ -101,18 +102,18 @@ export function readValue(memory, pointer, abi) {
       const child = (q, nextDepth) => { const value = read(q, nextDepth); nesting = Math.max(nesting, lastNesting + 1); return value; };
       if (tag === Tag.Closure) {
         for (let i = 0; i < len; i++) child(view.getUint32(p + 16 + i * 4, true), depth + 1);
-        if (declaredDepth !== nesting) bad('invalid result nesting metadata'); lastNesting = nesting; return { kind: 'Closure' };
+        if (declaredDepth !== nesting) bad('invalid result nesting metadata'); lastNesting = nesting; const value = { kind: 'Closure' }; memo.set(p, { value, nesting }); return value;
       }
       if (tag === Tag.Array) {
         const values = []; for (let i = 0; i < len; i++) values.push(child(view.getUint32(p + 16 + i * 4, true), depth + 1));
-        if (declaredDepth !== nesting) bad('invalid result nesting metadata'); lastNesting = nesting; return { kind: 'Array', values };
+        if (declaredDepth !== nesting) bad('invalid result nesting metadata'); lastNesting = nesting; const value = { kind: 'Array', values }; memo.set(p, { value, nesting }); return value;
       }
       const labels = [], values = [], seen = new Set();
       for (let i = 0; i < len; i++) {
         const label = view.getUint32(p + 16 + i * 8, true); if (label >= abi.labels.length || seen.has(label)) bad('invalid record label'); seen.add(label); labels.push(abi.labels[label]);
         values.push(child(view.getUint32(p + 20 + i * 8, true), depth + 1));
       }
-      if (declaredDepth !== nesting) bad('invalid result nesting metadata'); lastNesting = nesting; return { kind: 'Record', labels, values };
+      if (declaredDepth !== nesting) bad('invalid result nesting metadata'); lastNesting = nesting; const value = { kind: 'Record', labels, values }; memo.set(p, { value, nesting }); return value;
     } finally { active.delete(p); }
   };
   return read(pointer >>> 0, 0);

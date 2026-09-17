@@ -74,3 +74,37 @@ test('static heap metadata must fit the instantiated linear memory', () => {
   const memory = new WebAssembly.Memory({ initial: 1, maximum: 1 });
   rejects(() => readValue(memory, 16, { heap_start: 2 * 65536, labels: [] }), /static heap boundary/);
 });
+
+test('shared result subgraphs are decoded once instead of exhausting graph work', () => {
+  const items = 2_000, repeats = 600, intStart = 256;
+  const shared = intStart + items * 24;
+  const sharedSize = (16 + items * 4 + 7) & -8;
+  const root = shared + sharedSize;
+  const rootSize = (16 + repeats * 4 + 7) & -8;
+  const heapEnd = root + rootSize;
+  const pages = Math.ceil(heapEnd / 65536);
+  const memory = new WebAssembly.Memory({ initial: pages, maximum: pages }), view = new DataView(memory.buffer);
+  view.setUint32(12, heapEnd, true);
+  for (let i = 0; i < items; i++) integer(view, intStart + i * 24, i);
+  header(view, shared, Tag.Array, items, 0, 1);
+  for (let i = 0; i < items; i++) view.setUint32(shared + 16 + i * 4, intStart + i * 24, true);
+  header(view, root, Tag.Array, repeats, 0, 2);
+  for (let i = 0; i < repeats; i++) view.setUint32(root + 16 + i * 4, shared, true);
+  const value = readValue(memory, root, abi);
+  assert.equal(value.values.length, repeats);
+  assert.equal(value.values[0].values.length, items);
+  assert.equal(value.values[0].values[1_999], 1_999n);
+  assert.deepEqual(value.values.at(-1), value.values[0]);
+});
+
+test('memoized aggregate edges still consume the existing decode-work budget', () => {
+  const edges = 1_000_000, shared = 256, root = 272;
+  const rootSize = (16 + edges * 4 + 7) & -8, heapEnd = root + rootSize;
+  const pages = Math.ceil(heapEnd / 65536);
+  const memory = new WebAssembly.Memory({ initial: pages, maximum: pages }), view = new DataView(memory.buffer);
+  view.setUint32(12, heapEnd, true);
+  header(view, shared, Tag.Array, 0, 0, 0);
+  header(view, root, Tag.Array, edges, 0, 1);
+  for (let i = 0; i < edges; i++) view.setUint32(root + 16 + i * 4, shared, true);
+  assert.throws(() => readValue(memory, root, abi), e => e instanceof TTError && e.code === 'E_LIMIT' && /decoding limit/.test(e.message));
+});
