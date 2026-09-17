@@ -159,5 +159,5 @@ export function execute(wasm, { fuel = 10_000_000 } = {}) {
   start = performance.now(); const output = display(value); const display_ms = performance.now() - start;
   const heap_end = new DataView(instance.exports.memory.buffer).getUint32(12, true), heap_bytes = heap_end ? heap_end - loaded.abi.heap_start : null;
   const metrics = Object.freeze({ load_ms, instantiate_ms, execute_ms, decode_ms, display_ms, heap_bytes });
-  return Object.freeze({ value, output, module: loaded.module, metrics, remaining_fuel: instance.exports.fuel_remaining() });
+  return Object.freeze({ value, output, metrics, remaining_fuel: instance.exports.fuel_remaining() });
 }

@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compile, execute, loadWasm, readValue } from '../src/compiler.mjs';
+import { compile, execute, loadWasm, readValue, run } from '../src/compiler.mjs';
+
+const engineTypes = [WebAssembly.Module, WebAssembly.Memory, WebAssembly.Table, WebAssembly.Global];
+function assertDetached(value, seen = new Set()) {
+  if (value === null || typeof value !== 'object') { assert.notEqual(typeof value, 'function'); return; }
+  if (seen.has(value)) return; seen.add(value);
+  for (const Type of engineTypes) assert.equal(value instanceof Type, false, `persistent result retained ${Type.name}`);
+  for (const item of ArrayBuffer.isView(value) ? [] : Object.values(value)) assertDetached(item, seen);
+}
 
 test('execute returns deeply immutable detached aggregate snapshots', () => {
   const result = execute(compile('return [{.x=1;.items=[2,3];},{.x=4;.items=[5,6];}];').wasm);
@@ -15,19 +23,29 @@ test('execute returns deeply immutable detached aggregate snapshots', () => {
   assert.throws(() => { result.value.values[0] = null; }, TypeError);
 });
 
-test('execute does not expose a live Wasm instance or memory authority', () => {
-  const result = execute(compile('return 1+2;').wasm);
+test('execute exposes no live or compiled WebAssembly engine authority', () => {
+  const wasm = compile('return 1+2;').wasm, result = execute(wasm);
   assert.equal(result.value, 3n);
-  assert.equal(Object.hasOwn(result, 'instance'), false);
-  assert.equal(Object.hasOwn(result, 'memory'), false);
-  assert.ok(result.module instanceof WebAssembly.Module);
+  assert.deepEqual(Object.keys(result), ['value', 'output', 'metrics', 'remaining_fuel']);
+  for (const key of ['instance', 'memory', 'module', 'table']) assert.equal(Object.hasOwn(result, key), false);
+  assertDetached(result);
+  const loaded = loadWasm(wasm);
+  assert.ok(loaded.module instanceof WebAssembly.Module, 'low-level loader remains the explicit engine-object path');
+});
+
+test('run preserves detached execution results while retaining only copied Wasm bytes', () => {
+  const result = run('return map (fn x=>x+1) [1,2,3];');
+  assert.equal(result.output, '[2, 3, 4]');
+  assert.ok(result.wasm instanceof Uint8Array);
+  assert.equal(Object.hasOwn(result, 'module'), false);
+  assertDetached(result);
 });
 
 test('returned closures are frozen opaque descriptors without pointer or callable authority', () => {
   const result = execute(compile('let make=fn x=>fn y=>x+y; return make 40;').wasm);
   assert.equal(result.output, '<fn>'); assert.ok(Object.isFrozen(result.value));
   assert.deepEqual(Object.keys(result.value), ['kind']); assert.equal(result.value.kind, 'Closure');
-  for (const key of ['pointer', 'address', 'index', 'captures', 'instance', 'memory', 'call']) assert.equal(Object.hasOwn(result.value, key), false);
+  for (const key of ['pointer', 'address', 'index', 'captures', 'instance', 'memory', 'module', 'call']) assert.equal(Object.hasOwn(result.value, key), false);
   assert.notEqual(typeof result.value, 'function');
 });
 

@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "node": "v22.16.0",
+  "v8": "12.4.254.21-node.26",
+  "platform": "linux",
+  "arch": "x64",
+  "calls": 200,
+  "samples": 11,
+  "warmups": 2,
+  "boundary": "same compiled TT Wasm bytes; execute includes load, Module/Instance construction, execution, decode and display; retained result arrays held until each measurement ends; only result-shape difference is whether the already-created Module is retained on each high-level result",
+  "before_median_ms": 30.583083999999985,
+  "after_median_ms": 29.357148999999936,
+  "before_retained_module_refs": 200,
+  "after_retained_module_refs": 0,
+  "raw": [
+    {"before_ms":31.073223000000013,"before_modules":200,"after_ms":11.959269000000006,"after_modules":0},
+    {"after_ms":25.125256000000007,"after_modules":0,"before_ms":29.455929999999995,"before_modules":200},
+    {"before_ms":13.687337000000014,"before_modules":200,"after_ms":24.531379000000015,"after_modules":0},
+    {"after_ms":9.609105,"after_modules":0,"before_ms":10.69075399999997,"before_modules":200},
+    {"before_ms":11.352327000000002,"before_modules":200,"after_ms":14.019510999999966,"after_modules":0},
+    {"after_ms":63.82968500000004,"after_modules":0,"before_ms":25.56588800000003,"before_modules":200},
+    {"before_ms":31.136009,"before_modules":200,"after_ms":51.09644199999997,"after_modules":0},
+    {"after_ms":36.67893600000002,"after_modules":0,"before_ms":33.18156299999998,"before_modules":200},
+    {"before_ms":102.62725,"before_modules":200,"after_ms":29.357148999999936,"after_modules":0},
+    {"after_ms":35.464354999999955,"after_modules":0,"before_ms":30.78814799999998,"before_modules":200},
+    {"before_ms":30.583083999999985,"before_modules":200,"after_ms":161.68429200000003,"after_modules":0}
+  ]
+}
