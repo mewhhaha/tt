@@ -47,9 +47,36 @@ export function loadWasm(input) {
 }
 export function readValue(memory, pointer, abi) {
   const bytes = new Uint8Array(memory.buffer), view = new DataView(bytes.buffer); let visited = 0, lastNesting = 0; const active = new Set();
+  if (!Number.isInteger(abi?.heap_start) || abi.heap_start < 16 || abi.heap_start > bytes.length || abi.heap_start % 8) bad('invalid static heap boundary');
   const heapEnd = bytes.length >= 16 ? view.getUint32(12, true) : 0;
   if (heapEnd && (heapEnd < abi.heap_start || heapEnd > bytes.length || heapEnd % 8 !== 0)) bad('invalid live heap boundary');
   const dynamicEnd = heapEnd || bytes.length;
+  // The static pool and successful-run bump heap are contiguous allocation arenas.
+  // Mark their real object starts from the same size rules the emitter/runtime use,
+  // so an aligned interior address cannot masquerade as another boxed value header.
+  const starts = new Uint8Array(Math.ceil(Math.ceil(dynamicEnd / 8) / 8));
+  let staticFrontier = 16, dynamicFrontier = abi.heap_start;
+  const scanThrough = (target, dynamic) => {
+    const end = dynamic ? heapEnd : abi.heap_start; let p = dynamic ? dynamicFrontier : staticFrontier;
+    while (p <= target && p < end) {
+      const slot = p >>> 3; starts[slot >>> 3] |= 1 << (slot & 7);
+      if (p + 16 > end) bad('truncated allocation arena');
+      const tag = view.getUint32(p, true); let size;
+      if (tag === Tag.Unit || tag === Tag.Bool) size = 16;
+      else if (tag === Tag.Int) size = 24;
+      else {
+        const len = view.getUint32(p + 4, true);
+        if (tag === Tag.Text) { if (len > LIMITS.sourceBytes) bad('oversized text allocation'); size = 16 + len; }
+        else if (tag === Tag.Array || tag === Tag.Closure) { if (len > 1_000_000) bad('oversized aggregate allocation'); size = 16 + len * 4; }
+        else if (tag === Tag.Record) { if (len > 1_000_000) bad('oversized aggregate allocation'); size = 16 + len * 8; }
+        else bad('unknown allocation tag');
+      }
+      size = (size + 7) & -8; if (p + size > end) bad('allocation exceeds arena boundary'); p += size;
+    }
+    if (dynamic) dynamicFrontier = p; else staticFrontier = p;
+    const slot = target >>> 3; return !!(starts[slot >>> 3] & (1 << (slot & 7)));
+  };
+  const allocatedStart = p => p < abi.heap_start ? scanThrough(p, false) : !heapEnd || scanThrough(p, true);
   const bounds = (p, size) => {
     if (!Number.isInteger(p) || !Number.isInteger(size) || p < 16 || size < 0 || p % 8 || p + size < p) bad('invalid result memory range');
     const staticValue = p < abi.heap_start, end = staticValue ? abi.heap_start : dynamicEnd;
@@ -57,7 +84,9 @@ export function readValue(memory, pointer, abi) {
   };
   const read = (p, depth) => {
     if (++visited > 1_000_000 || depth > 128) fail(0, 'result decoding limit exceeded', 'E_LIMIT');
-    bounds(p, 16); if (active.has(p)) bad('cyclic result');
+    bounds(p, 16);
+    if (!allocatedStart(p)) bad('result pointer is not an allocation start');
+    if (active.has(p)) bad('cyclic result');
     const tag = view.getUint32(p, true), len = view.getUint32(p + 4, true);
     if (tag === Tag.Unit) { if (len) bad('invalid Unit result header'); lastNesting = 0; return null; }
     if (tag === Tag.Int) { if (len) bad('invalid Int result header'); bounds(p, 24); lastNesting = 0; return view.getBigInt64(p + 16, true); }
