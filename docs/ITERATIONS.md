@@ -157,7 +157,6 @@ of shared core/parser source with a safety-status error. No commit/ref update wa
 performed. Complete source and a base-checked migration patch are supplied to the
 owner; no alternate transport was used to bypass repository write controls.
 
-
 ## 2026-09-16 — compositional generic refinement evidence
 
 Hypothesis: useful duck-typed refinement precision can survive ordinary generic
@@ -257,3 +256,46 @@ The handoff predates current main's demanded-linking and repository-policy tests
 103 is not presented as an exact post-commit main aggregate. The changed production
 files were based on exact current-main blobs, and the behavior-specific tests passed
 locally. Source-mapped traps and deeper allocator/host-lifetime auditing remain next.
+
+## 2026-09-17 — source-positioned Wasm runtime traps
+
+Hypothesis: runtime diagnostics can recover precise TT source locations without a
+JavaScript interpreter, host imports, or a Wasm ABI-version bump by propagating a
+small source-offset state entirely inside generated Wasm.
+
+Implemented a private mutable Wasm source-position global. Each source expression
+sets it before its fuel tick; operations that evaluate children restore their own
+position before entering a runtime helper. The trap helper snapshots that position
+into the already-reserved low-memory diagnostic word before `unreachable`. The Node
+loader reads that word only after a Wasm runtime trap and constructs the normal
+`TTError` with the recovered position. `map`/`fold` save and restore the caller site
+around callback invocation so a callback trap points inside the callback while a
+later runtime-loop fuel failure points back to the higher-order call.
+
+The public export set and ABI-2 metadata fields are unchanged. A saved pre-change
+ABI-2 module executes with the new host; if an old artifact traps its reserved word
+is zero, so the diagnostic degrades to source offset 0 rather than being rejected.
+Standalone Wasm still does not embed source text or file identity.
+
+Local Node 22.16.0 / Linux evidence came from a reconstructed workspace whose changed
+production-source baselines were byte-identical to live main before modification:
+
+- `npm test`: 111/111 passed after adding three source-location tests to the current
+  regression set. Cases cover arithmetic/bounds failures, nested callback traps,
+  higher-order fuel-site restoration and CLI line/column display after non-ASCII text.
+- `npm run verify`: passed those tests, four examples, README execution, standalone
+  Wasm execution, compile work gates and the 1,000-element map/fold engine-stage test.
+- `npm run bench -- --sizes 500,1000,2000 --samples 11` and `npm run bench:runtime`
+  both passed. The runtime benchmark retained checksum 500500 at 1,000 elements,
+  11 samples and 100 calls/sample.
+- A matched five-program artifact comparison against exact pre-change source files
+  kept Wasm function counts unchanged and added 31 bytes for a literal program,
+  47 for arithmetic, 79 for a closure, 107 for map, and 60 for a record. Warm
+  in-process compile medians moved in both directions, so no speedup/regression claim
+  is inferred from those timing samples.
+
+Direct public DNS was unavailable inside the execution sandbox, so this is not a
+fresh `git clone` qualification. Repository reads/writes used the authorized GitHub
+connector, and the production source files used for local development were exact
+current-main blobs. Next backend work remains allocator/host-lifetime auditing and
+external source-provenance design for artifact-only diagnostics.
