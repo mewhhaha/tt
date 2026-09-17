@@ -299,3 +299,47 @@ fresh `git clone` qualification. Repository reads/writes used the authorized Git
 connector, and the production source files used for local development were exact
 current-main blobs. Next backend work remains allocator/host-lifetime auditing and
 external source-provenance design for artifact-only diagnostics.
+
+## 2026-09-17 — compact source provenance inside standalone Wasm
+
+Hypothesis: standalone artifact diagnostics can recover file/line/column without
+embedding source text, changing the public Wasm exports, or requiring an external
+source file by storing only bounded source identity and line-start metadata.
+
+Implemented an optional `tt.source` Wasm custom section. New compiler output stores
+format version 1, the JavaScript source-code-unit length, SHA-256 of the UTF-8 source,
+a bounded diagnostic label, and monotonically increasing line-start code-unit offsets.
+The section is inserted before the final `tt.abi` section and is therefore covered by
+ABI 2's existing `core_sha256`; the ABI field set and public export surface did not
+change. The loader permits old ABI-2 artifacts with no `tt.source` section. On a trap,
+the recovered runtime source offset is binary-searched in the embedded line table and
+attached to `TTError` as source name/hash/line/column.
+
+CLI `build` embeds only `basename(SOURCE)` to avoid leaking absolute build-machine
+paths. The programmatic compile API accepts an explicit `sourceName`. Full source text
+is not stored, and this metadata is diagnostic provenance rather than authentication
+or a general-purpose source map.
+
+Local Node 22.16.0 / Linux evidence used the latest recovered Node/Wasm handoff plus
+the exact bytes published in implementation commit
+`9df531eb3e2d6e10d9e7ca665169d418a960b3b6`:
+
+- `npm test`: 103/103 passed in the recovered workspace after adding three provenance
+  tests. The handoff predates current demanded-linking, ABI, repository-policy and
+  trap-location tests, so this is deliberately not labeled an exact current-main
+  aggregate.
+- `npm run verify`: passed those 103 tests, all four examples, README execution,
+  standalone saved-Wasm execution, 500/1,000/2,000 compile-work gates and the
+  1,000-element map/fold engine-stage check.
+- `npm run bench -- --sizes 500,1000,2000 --samples 11` and `npm run bench:runtime`
+  passed. Shared-host timings are observations only; no latency claim is made.
+- The `tt.source` section contributes 71 bytes to `return 1;` and 96-111 bytes to
+  the four repository examples. The standalone CLI test deletes the original `.tt`
+  source before `exec`, gets `trap.tt:3:10`, and verifies the temporary absolute
+  directory is absent from stderr. Another test verifies source SHA/line metadata and
+  asserts the complete source text is absent from the `.wasm` artifact.
+
+Direct public DNS remained unavailable, so an exact fresh-clone post-commit aggregate
+could not be run locally. Main was reread before publication and the update was a
+non-forced fast-forward. Next backend priority is allocator/host-lifetime auditing;
+production-readiness gates remain unchanged.
