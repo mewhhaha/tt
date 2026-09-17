@@ -143,7 +143,7 @@ export function display(value, depth = 0) {
     if (current?.kind === 'Record') {
       account('{ ', 2); const values = new Array(current.values.length);
       for (let i = 0; i < current.values.length; i++) {
-        const prefix = `.${current.labels[i]} = `; account(prefix); values[i] = prefix + render(current.values[i], atDepth + 1) + account('; ', 2);
+        const prefix = `.${current.labels[i]} = `; account(prefix, Buffer.byteLength(prefix)); values[i] = prefix + render(current.values[i], atDepth + 1) + account('; ', 2);
       }
       account('}', 1); return '{ ' + values.join('') + '}';
     }

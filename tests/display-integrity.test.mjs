@@ -17,6 +17,17 @@ test('display rejects repeated shared-DAG expansion at a bounded output size', (
   assert.throws(() => display(value), e => e instanceof TTError && e.code === 'E_LIMIT' && /display limit/.test(e.message));
 });
 
+test('display accounts multibyte record labels in UTF-8 bytes', () => {
+  const ordinary = { kind: 'Record', labels: ['€x'], values: [1n] };
+  assert.equal(display(ordinary), '{ .€x = 1; }');
+  assert.equal(Buffer.byteLength(display(ordinary)), 14);
+  const label = '€'.repeat(1_300_000);
+  assert.ok(Buffer.byteLength(label) <= LIMITS.sourceBytes);
+  const record = { kind: 'Record', labels: [label], values: [0n] };
+  const value = { kind: 'Array', values: Array(5).fill(record) };
+  assert.throws(() => display(value), e => e instanceof TTError && e.code === 'E_LIMIT' && /display limit/.test(e.message));
+});
+
 test('execute reports host decode and display as separate timing stages', () => {
   const result = execute(compile('return map (fn x=>x+1) [1,2,3];').wasm);
   assert.equal(result.output, '[2, 3, 4]');
