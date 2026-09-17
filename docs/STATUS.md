@@ -126,6 +126,41 @@ The local workspace was reconstructed because direct `git clone` from the execut
 sandbox has no public DNS. Production source baselines were exact GitHub blobs; this
 is not presented as a fresh network clone qualification.
 
+### Embedded standalone source provenance
+
+Newly emitted Wasm now carries a compact, integrity-covered `tt.source` custom
+section so an artifact can translate its trapped TT source offset into line/column
+without retaining the `.tt` file. The section stores a format byte, source length in
+JavaScript code units, a SHA-256 of the UTF-8 source, a bounded diagnostic label, and
+an ordered table of line-start code-unit offsets. It deliberately does **not** embed
+source text. CLI builds store only the source basename, not the absolute build-machine
+path; API callers may supply an explicit `sourceName`. ABI-2 public exports and the
+`tt.abi` field set remain unchanged because `tt.source` is covered by the existing
+core digest. The loader accepts older ABI-2 artifacts with no `tt.source` section.
+
+Fresh local Node 22.16.0 / Linux work used the latest recovered Node/Wasm handoff plus
+the production-source changes for commit `9df531eb3e2d6e10d9e7ca665169d418a960b3b6`:
+
+- `npm test`: 103/103 passed in that recovered workspace after adding three provenance
+  tests. This is not claimed as the exact current-main aggregate because the handoff
+  predates current demanded-linking, ABI-integrity, policy and trap-location tests.
+- `npm run verify`: passed the same 103 tests, all four examples, README execution,
+  standalone execution after deleting the original source, the 500/1,000/2,000
+  compile-work gates and the separate 1,000-element map/fold engine-stage check.
+- `npm run bench -- --sizes 500,1000,2000 --samples 11` and `npm run bench:runtime`
+  passed. No latency comparison is claimed. The new custom section contributed 71
+  bytes to a one-line literal artifact and 96-111 bytes to the four repository
+  examples (4.2%-6.3% of those small example artifacts).
+- The standalone CLI regression builds an absolute-path source, deletes the source,
+  then checks `exec` reports `trap.tt:3:10` and does not leak the temporary directory.
+  Another regression verifies the source hash and line table while asserting that the
+  complete source text is absent from the artifact.
+
+Direct public DNS remained unavailable in the execution sandbox, so a fresh local
+`git clone` of post-commit main could not be executed. The published commit is a
+fast-forward from the reread live main, and the behavior-specific files were exactly
+the locally exercised bytes. This limitation is not treated as production evidence.
+
 ## Repository state
 
 Current main contains only the Node/Wasm implementation. The removed legacy files
@@ -139,11 +174,10 @@ and JSON where useful; they are not executable implementations.
 
 The Wasm heap boxes generic values, uses a bounded per-main bump allocator and linear
 record lookup. It has no GC, reclaiming ownership system, persistent host object ABI
-or exported callable-closure interface. Runtime TT traps now carry source offsets for
-newly emitted artifacts, but saved Wasm still has no embedded source text, source map,
-or file identity; artifact-only `exec` therefore cannot reconstruct line/column text
-without external source provenance. ABI metadata and digests are integrity checks,
-not an audited hostile-module sandbox.
+or exported callable-closure interface. New artifacts carry compact line-start/source
+identity metadata for diagnostics, not source text or a general-purpose source map;
+the source SHA-256 is an identity/integrity aid, not authentication. ABI metadata and
+digests are integrity checks, not an audited hostile-module sandbox.
 
 Variants, recursion, modules, inferred effects/handlers, nominal declaration metadata,
 general compile-time evaluation, static parameters, declaration tags, ownership and
@@ -151,7 +185,6 @@ incremental compilation remain open. Generic refinement transport is conservativ
 for symbolic arithmetic and unsummarized collection primitives. Cross-engine and
 cross-platform qualification remain open. Production gates are unchanged.
 
-Next: continue allocator/lifetime auditing, define external source provenance for
-standalone Wasm diagnostics, extend bounded refinement relations to selected
-arithmetic/container summaries, then variants/recursion and nominal evidence before
-effects/staging and the systems-only ECS slice.
+Next: continue allocator/host-lifetime auditing, extend bounded refinement relations
+to selected arithmetic/container summaries, then variants/recursion and nominal
+evidence before effects/staging and the systems-only ECS slice.
