@@ -83,12 +83,26 @@ callback points into the callback while a later loop/fuel failure points back to
 `map`/`fold` call rather than to the callback's last expression.
 
 The source offset is the compiler's index into the decoded JavaScript source string,
-not a UTF-8 byte offset. The CLI `run` path still owns the original source and maps
-that offset to line/column, including when preceding source contains non-ASCII text.
-A standalone `.wasm` does not embed source text, path identity or a general source
-map; artifact-only `exec` can classify the trap and retain the raw offset internally,
-but reconstructing file/line text requires external source provenance. This is a
-bounded diagnostic mechanism, not DWARF or a standardized Wasm source-map format.
+not a UTF-8 byte offset. New artifacts include an optional `tt.source` custom section
+with source-provenance format version 1. Its payload is: one version byte; source
+length in JavaScript code units as little-endian u32; 32 raw SHA-256 bytes over the
+UTF-8 source; a bounded UTF-8 diagnostic label; and an ordered little-endian u32
+line-start table. The loader validates the table and binary-searches it to recover
+line/column after a Wasm trap. Full source text is deliberately not embedded.
+
+CLI `build` uses only the source basename as the diagnostic label, avoiding accidental
+absolute build-machine path leakage. The programmatic `compile` API accepts an
+explicit `sourceName`; an empty name remains valid and causes CLI `exec` to fall back
+to the artifact path for display. The source digest is an identity/integrity aid,
+not authentication. Line/column units follow the parser's JavaScript-string indexing,
+so the table remains correct when earlier source contains non-ASCII text.
+
+`tt.source` appears before the final `tt.abi` section and is included in `core_bytes`
+and `core_sha256`. Therefore provenance corruption is covered by the existing ABI-2
+core integrity check without changing public exports or the `tt.abi` field set. The
+loader still accepts older ABI-2 artifacts that have no `tt.source` section; those
+artifacts retain only their raw trap offset behavior. This is a bounded diagnostic
+mechanism, not DWARF or a standardized Wasm source-map format.
 
 ## Artifact checks and trust
 
@@ -108,7 +122,8 @@ modules, not arbitrary Wasm applications. A deliberately forged module can bypas
 its own fuel accounting or diagnostic bookkeeping; this is NOT an audited
 hostile-module sandbox. Run trusted artifacts only. Strong hostile-input isolation
 needs a separately audited boundary. ABI 2 is still provisional. The source-position
-diagnostic did not change its metadata schema or public export set.
+and source-provenance diagnostics did not change its public export set or metadata
+field schema.
 
 ## Migration
 
