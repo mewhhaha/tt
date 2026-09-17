@@ -118,12 +118,45 @@ export function readValue(memory, pointer, abi) {
   };
   return read(pointer >>> 0, 0);
 }
-export function display(value, depth = 0) { if (depth > 64) return '...'; if (value === null) return '()'; if (typeof value === 'bigint' || typeof value === 'boolean') return String(value); if (typeof value === 'string') return '"' + value.replace(/[\n\r\t"\\]/g, c => ({ '\n': '\\n', '\r': '\\r', '\t': '\\t', '"': '\\"', '\\': '\\\\' })[c]) + '"'; if (value.kind === 'Closure') return '<fn>'; if (value.kind === 'Array') return '[' + value.values.map(x => display(x, depth + 1)).join(', ') + ']'; if (value.kind === 'Record') return '{ ' + value.values.map((x, i) => `.${value.labels[i]} = ${display(x, depth + 1)}; `).join('') + '}'; bad('invalid decoded result'); }
+const DISPLAY_BYTES = 16 * 1024 * 1024;
+export function display(value, depth = 0) {
+  let outputBytes = 0;
+  const account = (text, bytes = text.length) => {
+    outputBytes += bytes;
+    if (outputBytes > DISPLAY_BYTES) fail(0, `result display limit (${DISPLAY_BYTES} bytes) exceeded`, 'E_LIMIT');
+    return text;
+  };
+  const render = (current, atDepth) => {
+    if (atDepth > 64) return account('...');
+    if (current === null) return account('()');
+    if (typeof current === 'bigint' || typeof current === 'boolean') return account(String(current));
+    if (typeof current === 'string') {
+      const escaped = current.replace(/[\n\r\t"\\]/g, c => ({ '\n': '\\n', '\r': '\\r', '\t': '\\t', '"': '\\"', '\\': '\\\\' })[c]);
+      return account('"' + escaped + '"', Buffer.byteLength(escaped) + 2);
+    }
+    if (current?.kind === 'Closure') return account('<fn>');
+    if (current?.kind === 'Array') {
+      account('[', 1); const values = new Array(current.values.length);
+      for (let i = 0; i < current.values.length; i++) { if (i) account(', ', 2); values[i] = render(current.values[i], atDepth + 1); }
+      account(']', 1); return '[' + values.join(', ') + ']';
+    }
+    if (current?.kind === 'Record') {
+      account('{ ', 2); const values = new Array(current.values.length);
+      for (let i = 0; i < current.values.length; i++) {
+        const prefix = `.${current.labels[i]} = `; account(prefix); values[i] = prefix + render(current.values[i], atDepth + 1) + account('; ', 2);
+      }
+      account('}', 1); return '{ ' + values.join('') + '}';
+    }
+    bad('invalid decoded result');
+  };
+  return render(value, depth);
+}
 export function execute(wasm, { fuel = 10_000_000 } = {}) {
   if (!Number.isSafeInteger(fuel) || fuel < 0) throw new TypeError('fuel must be a nonnegative safe integer');
   let start = performance.now(); const loaded = loadWasm(wasm); const load_ms = performance.now() - start; start = performance.now(); const instance = new WebAssembly.Instance(loaded.module, {}); const instantiate_ms = performance.now() - start; instance.exports.set_fuel(BigInt(fuel)); let pointer; start = performance.now();
   try { pointer = instance.exports.main(); } catch (e) { if (!(e instanceof WebAssembly.RuntimeError)) throw e; const known = Errors[instance.exports.error_code()]; const position = new DataView(instance.exports.memory.buffer).getUint32(8, true); const error = new TTError(known?.[0] ?? 'E_RUNTIME', position, known?.[1] ?? ('unexpected Wasm trap: ' + e.message)); error.source = sourceLocation(loaded.source, position); throw error; }
-  const execute_ms = performance.now() - start; start = performance.now(); const value = readValue(instance.exports.memory, pointer, loaded.abi), output = display(value); const decode_ms = performance.now() - start;
+  const execute_ms = performance.now() - start; start = performance.now(); const value = readValue(instance.exports.memory, pointer, loaded.abi); const decode_ms = performance.now() - start;
+  start = performance.now(); const output = display(value); const display_ms = performance.now() - start;
   const heap_end = new DataView(instance.exports.memory.buffer).getUint32(12, true), heap_bytes = heap_end ? heap_end - loaded.abi.heap_start : null;
-  return { value, output, instance, module: loaded.module, metrics: { load_ms, instantiate_ms, execute_ms, decode_ms, heap_bytes }, remaining_fuel: instance.exports.fuel_remaining() };
+  return { value, output, instance, module: loaded.module, metrics: { load_ms, instantiate_ms, execute_ms, decode_ms, display_ms, heap_bytes }, remaining_fuel: instance.exports.fuel_remaining() };
 }

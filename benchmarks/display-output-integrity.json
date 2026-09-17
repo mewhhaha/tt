@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "node": "v22.16.0",
+  "v8": "12.4.254.21-node.26",
+  "platform": "linux",
+  "arch": "x64",
+  "workload": "display decoded Array of 100000 distinct BigInt values; host-only; alternating before/after after 3 warmups",
+  "before_host_sha256": "39a1f668a11ac412b8cf391fd8ef5e4f99c28a8de9a9fc9a41114057386bde23",
+  "after_host_sha256": "7c13021c2f9a3e040daae789b6a1bc753ecdf22cf21cf2101044c15bced6815a",
+  "samples": [
+    {
+      "before": 11.373171,
+      "after": 6.993920999999986
+    },
+    {
+      "after": 7.490329000000003,
+      "before": 13.092095999999998
+    },
+    {
+      "before": 6.913742999999982,
+      "after": 6.913813000000005
+    },
+    {
+      "after": 7.9248569999999745,
+      "before": 12.27472499999999
+    },
+    {
+      "before": 7.066586999999998,
+      "after": 7.602113000000003
+    },
+    {
+      "after": 9.944462999999985,
+      "before": 6.972959000000003
+    },
+    {
+      "before": 11.037698000000006,
+      "after": 7.239420000000024
+    },
+    {
+      "after": 6.978558000000021,
+      "before": 19.546002000000016
+    },
+    {
+      "before": 7.1390329999999835,
+      "after": 9.76699199999996
+    },
+    {
+      "after": 14.916704000000038,
+      "before": 12.193596000000014
+    },
+    {
+      "before": 11.394241000000022,
+      "after": 7.002501999999993
+    }
+  ],
+  "before_median_ms": 11.373171,
+  "after_median_ms": 7.490329000000003
+}
