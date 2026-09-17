@@ -62,16 +62,28 @@ pointers and Wasm functions do not call JavaScript to perform language operation
 Linear-memory addresses 0..15 remain reserved and are never TT value pointers. New
 artifacts use the u32 word at offset 8 as private trap-diagnostic scratch: `main`
 clears it, and the in-Wasm trap helper stores the current source offset immediately
-before trapping. This word is intentionally not a new public export or metadata
-field; hosts should consume diagnostics through the TT loader rather than depending
-on that private address. Older ABI-2 artifacts leave the word zero and continue to
-load, so their runtime failures simply have no recovered source offset.
+before trapping. The u32 word at offset 12 is private successful-run lifetime
+scratch: `main` clears it before entering source code and writes the final bump-heap
+cursor only after the source entry returns successfully. Neither word is a public
+export or ABI metadata field; hosts should consume diagnostics/results through the
+TT loader rather than depending directly on these addresses. Older ABI-2 artifacts
+leave the lifetime word zero and continue to load.
 
-`main` resets the heap cursor, call depth, error, diagnostic source position and
-remaining fuel every time. Previous result pointers are invalidated by the next main
-call. Host decoding copies out values before reuse. Static bytes are retained; grown
-memory is reused. Do not mutate exported memory while relying on language invariants.
-There is no GC yet.
+`main` resets the heap cursor, call depth, error, diagnostic source position,
+lifetime watermark and remaining fuel every time. Previous result pointers are
+invalidated by the next main call. Host decoding copies out values before reuse and,
+for new artifacts, checks that static values stay within `[16, heap_start)` and
+runtime values stay within `[heap_start, live_heap_end)`. Pointers into unused grown
+memory and objects straddling the static/dynamic boundary are rejected. A trapped
+invocation leaves the live-heap watermark zero so an earlier run's lifetime is not
+advertised. Static bytes are retained; grown memory is reused. Do not mutate exported
+memory while relying on language invariants. There is no GC yet.
+
+`execute(...).metrics.heap_bytes` reports the successful invocation's dynamic bump
+allocation (`live_heap_end - heap_start`). It is not peak resident memory, retained
+live-object size, or a GC metric. Older ABI-2 artifacts have no lifetime watermark,
+so their decoder compatibility path retains the older linear-memory-page bound and
+reports `heap_bytes: null`.
 
 ## Runtime source diagnostics
 
@@ -117,13 +129,13 @@ exports, imports, unsupported schema, corrupt bytes and legacy TTBC. These diges
 are integrity checks, not signatures, authenticity proofs, or proof of typechecking.
 
 WebAssembly.validate and the engine validate the machine code. The host decoder
-bounds memory ranges, sizes/depths, tags, UTF-8 and cycles. `exec` accepts TT ABI
-modules, not arbitrary Wasm applications. A deliberately forged module can bypass
-its own fuel accounting or diagnostic bookkeeping; this is NOT an audited
-hostile-module sandbox. Run trusted artifacts only. Strong hostile-input isolation
-needs a separately audited boundary. ABI 2 is still provisional. The source-position
-and source-provenance diagnostics did not change its public export set or metadata
-field schema.
+bounds memory ranges, live-allocation regions, sizes/depths, tags, UTF-8 and cycles.
+`exec` accepts TT ABI modules, not arbitrary Wasm applications. A deliberately
+forged module can bypass its own fuel accounting, diagnostic bookkeeping, or private
+heap watermark; this is NOT an audited hostile-module sandbox. Run trusted artifacts
+only. Strong hostile-input isolation needs a separately audited boundary. ABI 2 is
+still provisional. The source-position, source-provenance and lifetime diagnostics
+did not change its public export set or metadata field schema.
 
 ## Migration
 
