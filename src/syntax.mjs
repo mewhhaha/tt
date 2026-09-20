@@ -1,10 +1,14 @@
 import { NONE, MIN, MAX, LIMITS, fail, enter, Symbols, Ranges, comparison, contract, intContract } from './core.mjs';
 
-const wordStart = c => /[a-zA-Z_@]/.test(c ?? '');
-const wordRest = c => /[a-zA-Z_@0-9]/.test(c ?? '');
-const digit = c => c !== undefined && c >= '0' && c <= '9';
+// ASCII names are intentional. charCodeAt returns NaN past EOF, which fails
+// these ranges; Unicode remains allowed in Text, not in identifiers.
+const letter = c => (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95 || c === 64;
+const digit = c => c >= 48 && c <= 57;
 const doubles = new Set(['=>', '->', '::', '==', '!=', '<=', '>=', '&&', '||', '..']);
 const arrayForms = new Map([['@get',['ArrayGet',2]],['@slice',['ArraySlice',3]],['@concat',['ArrayConcat',2]],['@set',['ArraySet',3]],['@materialize',['ArrayMaterialize',1]]]);
+// Absent child vectors are read-only; real vectors are built before add().
+const emptyChildren = Object.freeze([]);
+const ownershipForms = new Map([['@own','Own'],['@move','Move'],['@drop','Drop'],['@snapshot','Snapshot'],['@take','Take']]);
 const comparisons = new Set(['<', '>', '<=', '>=', '==', '!=']);
 const reserved = new Set(['then', 'else', 'return', 'let', 'const', 'where', 'with', 'in', 'effect']);
 const precedence = new Map([['||', 1], ['&&', 2], ['==', 3], ['!=', 3],
@@ -16,31 +20,38 @@ export function lex(source) {
   if (!source.isWellFormed()) fail(0, 'source contains an unpaired Unicode surrogate', 'E_PARSE');
   const out = []; let i = 0;
   while (i < source.length) {
-    const c = source[i];
-    if (' \t\r\n'.includes(c)) { i++; continue; }
-    if (c === '/' && source[i + 1] === '/') { while (i < source.length && source[i] !== '\n') i++; continue; }
+    const c = source.charCodeAt(i);
+    if (c === 32 || c === 9 || c === 13 || c === 10) { i++; continue; }
+    if (c === 47 && source.charCodeAt(i + 1) === 47) {
+      const end = source.indexOf('\n', i + 2); i = end === -1 ? source.length : end; continue;
+    }
     const pos = i;
-    if (wordStart(c)) {
-      while (wordRest(source[++i])) { /* scan */ }
+    if (letter(c)) {
+      let next; do { next = source.charCodeAt(++i); } while (letter(next) || digit(next));
       out.push({ kind: 'word', text: source.slice(pos, i), pos });
     } else if (digit(c)) {
-      while (digit(source[++i])) { /* scan */ }
+      while (digit(source.charCodeAt(++i))) { /* scan */ }
       out.push({ kind: 'number', text: source.slice(pos, i), pos });
-    } else if (c === '"') {
-      i++; const chars = []; let closed = false;
+    } else if (c === 34) {
+      // Retain source spans, not one temporary string per code unit. Most Text
+      // literals take one slice; escaped Text joins only the spans and escapes.
+      let start = ++i, chunks = null, closed = false;
       while (i < source.length) {
-        let x = source[i++];
-        if (x === '"') { closed = true; break; }
-        if (x === '\\') {
-          if (i === source.length) break;
-          x = source[i++];
-          if (x === 'n') x = '\n'; else if (x === 'r') x = '\r'; else if (x === 't') x = '\t';
-          else if (x !== '"' && x !== '\\') fail(i - 1, 'unsupported string escape', 'E_PARSE');
-        }
-        chars.push(x);
+        const x = source.charCodeAt(i++);
+        if (x === 34) { closed = true; break; }
+        if (x !== 92) continue;
+        if (i === source.length) break;
+        const escaped = source[i++]; let decoded = escaped;
+        if (escaped === 'n') decoded = '\n'; else if (escaped === 'r') decoded = '\r';
+        else if (escaped === 't') decoded = '\t';
+        else if (escaped !== '"' && escaped !== '\\') fail(i - 1, 'unsupported string escape', 'E_PARSE');
+        if (chunks === null) chunks = [];
+        chunks.push(source.slice(start, i - 2), decoded); start = i;
       }
       if (!closed) fail(pos, 'unterminated string', 'E_PARSE');
-      out.push({ kind: 'string', text: chars.join(''), pos });
+      let text = source.slice(start, i - 1);
+      if (chunks !== null) { chunks.push(text); text = chunks.join(''); }
+      out.push({ kind: 'string', text, pos });
     } else {
       let text = source[i++];
       if (doubles.has(text + source[i])) text += source[i++];
@@ -51,6 +62,7 @@ export function lex(source) {
   }
   out.push({ kind: 'end', text: '', pos: source.length }); return out;
 }
+
 export class Parser {
   at = 0; depth = 0; aliases = new Map(); effects = new Map();
   ast = { symbols: new Symbols(), nodes: [], root: NONE };
@@ -58,7 +70,7 @@ export class Parser {
     if (ast) this.ast = ast;
     this.moduleName = moduleName;
     try { this.tokens = lex(source); } catch (e) { if (typeof e.pos === 'number') e.pos += offset; throw e; }
-    for (const token of this.tokens) token.pos += offset;
+    if (offset !== 0) for (const token of this.tokens) token.pos += offset;
   }
   get t() { return this.tokens[this.at]; }
   is(text) { return this.t.kind !== 'string' && this.t.text === text; }
@@ -82,7 +94,7 @@ export class Parser {
   add(e) {
     if (this.ast.nodes.length >= LIMITS.astNodes) fail(e.pos, 'AST node limit exceeded', 'E_LIMIT');
     this.ast.nodes.push({ a: NONE, b: NONE, c: NONE, name: NONE, binder: NONE,
-      type: NONE, paramType: NONE, annotation: null, items: [], fields: [], bindings: [], ...e });
+      type: NONE, paramType: NONE, annotation: null, items: emptyChildren, fields: emptyChildren, bindings: emptyChildren, ...e });
     return this.ast.nodes.length - 1;
   }
   typeAtom() {
@@ -153,7 +165,7 @@ export class Parser {
   }
   startsAtom() {
     return this.t.kind === 'number' || this.t.kind === 'string' ||
-      (this.t.kind === 'word' && !reserved.has(this.t.text)) || ['(', '[', '{'].some(x => this.is(x));
+      (this.t.kind === 'word' && !reserved.has(this.t.text)) || this.is('(') || this.is('[') || this.is('{');
   }
   atom() {
     enter(this, this.t.pos);
@@ -175,9 +187,9 @@ export class Parser {
         if (this.t.kind !== 'string') fail(this.t.pos, 'import requires a literal relative .tt path', 'E_MODULE');
         e.kind = 'Import'; e.text = this.take().text;
       } else if (this.eat('host')) { e.kind = 'Host'; e.a = this.postfix(); }
-      else if (['@own', '@move', '@drop', '@snapshot', '@take'].some(word => this.is(word))) {
+      else if (this.t.kind === 'word' && ownershipForms.has(this.t.text)) {
         this.ast.ownership = true;
-        e.kind = ({ own: 'Own', move: 'Move', drop: 'Drop', snapshot: 'Snapshot', take: 'Take' })[this.take().text.slice(1)];
+        e.kind = ownershipForms.get(this.take().text);
         e.a = this.postfix();
       } else if (this.eat('@borrow')) {
         this.ast.ownership = true; e.kind = 'Borrow'; e.a = this.postfix();

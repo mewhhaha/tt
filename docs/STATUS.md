@@ -5,6 +5,30 @@ dependency-free Node.js compiler emitting real Wasm. There is no C++/Python
 implementation, source interpreter, custom bytecode target, or required package
 installation. The production-readiness checklist is unchanged.
 
+## Latest: lower-allocation frontend
+
+The lexer now classifies ASCII directly, scans Text in spans instead of per-code-unit
+arrays, and skips comments with newline search. Parser hot paths avoid temporary
+selectors, zero-offset token rewrites and per-node empty child vectors. Only
+src/syntax.mjs changes in production; every static checker and the Wasm runtime
+remain unchanged. No tracing GC or reference counting is added to TT.
+
+Local Node 22.16 verification passes **296/296** tests (baseline 290), full verification,
+and explicit compiler/runtime gates. The new regressions compare tokens and exact
+diagnostics against a frozen baseline on fixtures, ASCII boundaries, Unicode/escapes,
+5,000 generated strings and limits. All accepted baseline fixtures, eight pure/host
+application entries and twelve benchmark workloads produce byte-identical Wasm;
+inferred types/effects and deterministic work counters also match.
+
+In 21 alternating warm samples, 2,000 polymorphic calls measured 68.308->56.483ms,
+refined calls 19.395->15.451ms and effect calls 38.362->33.825ms. The 512 KiB plain-Text
+case measured 76.740->17.437ms. Record total time was unchanged at 25.297->25.338ms.
+These include all checking/emission/validation, not just lexing. No general speedup
+or runtime change is claimed. Fresh-process records had no total wall-time win;
+large-Text wall time improved 361.697->259.879ms. Raw samples and qualification are in
+[the frontend iteration](iterations/2026-09-20-frontend-performance.md) and
+benchmarks/frontend-performance.json. Prior publication evidence below is historical.
+
 ## Ownership and array publication
 
 This change integrates the previously delivered ownership and array implementations
