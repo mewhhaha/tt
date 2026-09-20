@@ -2,6 +2,7 @@ import { performance } from 'node:perf_hooks';
 import { Parser } from './syntax.mjs';
 import { Types, Infer } from './types.mjs';
 import { Refine } from './refine.mjs';
+import { Ownership } from './ownership.mjs';
 import { Effects } from './effects.mjs';
 import { prepareModules, locateSource } from './modules.mjs';
 import { WasmEmit } from './wasm.mjs';
@@ -15,6 +16,9 @@ function compilePrepared(prepared, emit, parse_ms, optimize) {
     const types = new Types(), inference = new Infer(ast, types);
     let start = performance.now(); const type = inference.run(); const type_ms = performance.now() - start;
     start = performance.now();
+    const ownership = ast.ownership ? new Ownership(ast, types, inference).run() : { steps: 0 };
+    const ownership_ms = performance.now() - start;
+    start = performance.now();
     const effects = ast.nodes.some(n => ['Effect', 'Host', 'Handle'].includes(n.kind)) ? new Effects(ast, types, inference).run()
       : { operations: [], hosts: [], effects: [], functions: [], steps: 0 };
     const effect_ms = performance.now() - start;
@@ -26,7 +30,7 @@ function compilePrepared(prepared, emit, parse_ms, optimize) {
     }
     return { wasm, type: types.show(type, ast.symbols), effects: effects.effects,
       effect_functions: effects.functions, modules, metrics: {
-        parse_ms, type_ms, effect_ms, refine_ms, emit_ms, validation_ms,
+        ownership_ms, ownership_steps: ownership.steps, parse_ms, type_ms, effect_ms, refine_ms, emit_ms, validation_ms,
         ast_nodes: ast.nodes.length, type_nodes: types.nodes.length, effect_steps: effects.steps,
         module_count: modules.length || 1, ...types.metrics, ...emission,
       } };

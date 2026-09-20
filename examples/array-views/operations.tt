@@ -1,0 +1,4 @@
+const Index = Int where self >= 0 && self < 4;
+effect IndexInput :: Unit -> Index;
+effect ValueInput :: Unit -> Int;
+return { .Index = IndexInput; .Value = ValueInput; };

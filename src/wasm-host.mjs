@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { fail, LIMITS, TTError } from './core.mjs';
+import { readOwnership, ownershipMetrics, OWNED_EXPORTS } from './ownership-host.mjs';
 import { Errors, Tag } from './wasm-runtime.mjs';
 import { readHostEffects, hostImports, readModuleSources } from './host-effects.mjs';
 const bad = message => fail(0, message, 'E_WASM');
@@ -48,9 +49,18 @@ export function loadWasm(input) {
   let at = abi.core_bytes; const readLeb = () => { let x = 0; for (let i = 0; i < 5; i++) { if (at >= bytes.length) bad('truncated ABI section'); const b = bytes[at++]; if (i === 4 && b > 15) bad('invalid ABI length'); x += (b & 127) * 2 ** (i * 7); if (!(b & 128)) return x; } bad('invalid ABI length'); };
   if (bytes[at++] !== 0) bad('tt.abi must be the final section'); const size = readLeb(), end = at + size, len = readLeb(); if (end !== bytes.length || len !== 6 || bytes.subarray(at, at + 6).toString() !== 'tt.abi') bad('invalid final ABI section');
   if (createHash('sha256').update(bytes.subarray(0, abi.core_bytes)).digest('hex') !== abi.core_sha256) bad('Wasm integrity mismatch');
+  const arraySections = WebAssembly.Module.customSections(module,'tt.arrays');
+  if(arraySections.length>1)bad('duplicate tt.arrays section');
+  if(arraySections.length){
+    if(arraySections[0].byteLength>128)bad('oversized tt.arrays metadata');
+    let spec;try{spec=JSON.parse(utf8.decode(arraySections[0]));}catch{bad('invalid tt.arrays metadata');}
+    if(!spec||Object.keys(spec).join(',')!=='version'||spec.version!==1)bad('unsupported tt.arrays metadata');
+  }
+  const ownership = readOwnership(module, abi);
   const exports = WebAssembly.Module.exports(module), required = new Map([['main', 'function'], ['set_fuel', 'function'], ['error_code', 'function'], ['fuel_remaining', 'function'], ['memory', 'memory']]);
+  if (ownership) for (const name of Object.keys(OWNED_EXPORTS)) required.set(name, 'function');
   if (exports.length !== required.size || !exports.every(e => required.get(e.name) === e.kind)) bad('incompatible Wasm exports');
-  return { bytes, module, abi, source: readModuleSources(module, parseSource(module)), hostEffects: readHostEffects(module, bytes) };
+  return { bytes, module, abi, ownership, source: readModuleSources(module, parseSource(module)), hostEffects: readHostEffects(module, bytes) };
 }
 export function readValue(memory, pointer, abi) {
   const bytes = new Uint8Array(memory.buffer), view = new DataView(bytes.buffer); let visited = 0, lastNesting = 0; const active = new Set(), memo = new Map();
@@ -71,6 +81,7 @@ export function readValue(memory, pointer, abi) {
       const tag = view.getUint32(p, true); let size;
       if (tag === Tag.Unit || tag === Tag.Bool) size = 16;
       else if (tag === Tag.Int) size = 24;
+      else if (tag === Tag.Slice || tag === Tag.Concat) size = 32;
       else {
         const len = view.getUint32(p + 4, true);
         if (tag === Tag.Text) { if (len > LIMITS.sourceBytes) bad('oversized text allocation'); size = 16 + len; }
@@ -99,10 +110,37 @@ export function readValue(memory, pointer, abi) {
     if (tag === Tag.Int) { if (len) bad('invalid Int result header'); bounds(p, 24); lastNesting = 0; return view.getBigInt64(p + 16, true); }
     if (tag === Tag.Bool) { const b = view.getUint32(p + 8, true); if (len || b > 1) bad('invalid Boolean result'); lastNesting = 0; return !!b; }
     if (tag === Tag.Text) { if (len > LIMITS.sourceBytes) bad('oversized text result'); bounds(p, 16 + len); try { const value = utf8.decode(bytes.subarray(p + 16, p + 16 + len)); lastNesting = 0; return value; } catch { bad('invalid UTF-8 result'); } }
-    if (tag !== Tag.Record && tag !== Tag.Array && tag !== Tag.Closure) bad('unknown result tag');
+    if (tag !== Tag.Record && tag !== Tag.Array && tag !== Tag.Closure && tag !== Tag.Slice && tag !== Tag.Concat) bad('unknown result tag');
     const cached = memo.get(p); if (cached) { lastNesting = cached.nesting; return cached.value; }
     if (len > 1_000_000) bad('oversized aggregate result');
     const aux = view.getUint32(p + 8, true), declaredDepth = view.getUint32(p + 12, true); if (declaredDepth > 128) bad('invalid result nesting metadata'); if (tag !== Tag.Closure && aux) bad('invalid aggregate result header');
+    if (tag === Tag.Slice || tag === Tag.Concat) {
+      bounds(p,32); const height=view.getUint32(p+24,true);
+      if(!height||height>64||view.getUint32(p+28,true))bad('invalid array view header');
+      const heightOf=q=>view.getUint32(q,true)===Tag.Array?0:view.getUint32(q+24,true);
+      active.add(p);
+      try {
+        const leftPointer=view.getUint32(p+16,true),left=read(leftPointer,depth+1),leftNesting=lastNesting;
+        if(left?.kind!=='Array')bad('array view must reference arrays');
+        let values,nesting;
+        if(tag===Tag.Slice){
+          const start=view.getUint32(p+20,true);
+          if(start>left.values.length||len>left.values.length-start||height!==heightOf(leftPointer)+1)bad('invalid array slice range or height');
+          nesting=leftNesting;
+          visited+=len;if(visited>1_000_000)fail(0,'result decoding limit exceeded','E_LIMIT');
+          values=left.values.slice(start,start+len);
+        }else{
+          const rightPointer=view.getUint32(p+20,true),right=read(rightPointer,depth+1),rightNesting=lastNesting;
+          if(right?.kind!=='Array'||len!==left.values.length+right.values.length||height!==Math.max(heightOf(leftPointer),heightOf(rightPointer))+1)bad('invalid array concat range or height');
+          nesting=Math.max(leftNesting,rightNesting);
+          visited+=len;if(visited>1_000_000)fail(0,'result decoding limit exceeded','E_LIMIT');
+          values=left.values.concat(right.values);
+        }
+        if(declaredDepth!==nesting)bad('invalid result nesting metadata');
+        Object.freeze(values);const value=Object.freeze({kind:'Array',values});lastNesting=nesting;
+        memo.set(p,{value,nesting});return value;
+      }finally{active.delete(p);}
+    }
     const width = tag === Tag.Record ? 8 : 4; bounds(p, 16 + len * width); active.add(p);
     try {
       let nesting = 0;
@@ -161,10 +199,10 @@ export function display(value, depth = 0) {
 export function execute(wasm, { fuel = 10_000_000, host = new Map() } = {}) {
   if (!Number.isSafeInteger(fuel) || fuel < 0) throw new TypeError('fuel must be a nonnegative safe integer');
   let start = performance.now(); const loaded = loadWasm(wasm); const load_ms = performance.now() - start; start = performance.now(); let instance; const capabilities = hostImports(loaded, host, () => instance, sourceLocation); instance = new WebAssembly.Instance(loaded.module, capabilities.imports); const instantiate_ms = performance.now() - start; instance.exports.set_fuel(BigInt(fuel)); let pointer; start = performance.now();
-  try { pointer = instance.exports.main(); } catch (e) { if (!(e instanceof WebAssembly.RuntimeError)) throw e; const known = Errors[instance.exports.error_code()]; const position = new DataView(instance.exports.memory.buffer).getUint32(8, true); const error = new TTError(known?.[0] ?? 'E_RUNTIME', position, known?.[1] ?? ('unexpected Wasm trap: ' + e.message)); error.source = sourceLocation(loaded.source, position); throw error; }
+  try { pointer = instance.exports.main(); } catch (e) { if (loaded.ownership) instance.exports.owned_reset(); if (!(e instanceof WebAssembly.RuntimeError)) throw e; const known = Errors[instance.exports.error_code()]; const position = new DataView(instance.exports.memory.buffer).getUint32(8, true); const error = new TTError(known?.[0] ?? 'E_RUNTIME', position, known?.[1] ?? ('unexpected Wasm trap: ' + e.message)); error.source = sourceLocation(loaded.source, position); throw error; }
   const execute_ms = performance.now() - start; start = performance.now(); const value = readValue(instance.exports.memory, pointer, loaded.abi); const decode_ms = performance.now() - start;
   start = performance.now(); const output = display(value); const display_ms = performance.now() - start;
   const heap_end = new DataView(instance.exports.memory.buffer).getUint32(12, true), heap_bytes = heap_end ? heap_end - loaded.abi.heap_start : null;
-  const metrics = Object.freeze({ load_ms, instantiate_ms, execute_ms, decode_ms, display_ms, heap_bytes, host_calls: capabilities.metrics.calls, host_ms: capabilities.metrics.ms });
+  const metrics = Object.freeze({ ...(loaded.ownership ? ownershipMetrics(instance) : {}), load_ms, instantiate_ms, execute_ms, decode_ms, display_ms, heap_bytes, host_calls: capabilities.metrics.calls, host_ms: capabilities.metrics.ms });
   return Object.freeze({ value, output, metrics, remaining_fuel: instance.exports.fuel_remaining() });
 }

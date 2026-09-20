@@ -1,0 +1,22 @@
+let Ops = import "./operations.tt";
+let run = fn ignored => do {
+  let state = @own [10, 20, 30, 40];
+  let previous = @snapshot state;
+  let joinedLength = @borrow state as xs in do {
+    let left = @slice(xs, 0, 2);
+    let right = @slice(xs, 2, 4);
+    return length (@concat(left, right));
+  };
+  let next = @set(@move state, Ops.Index (), Ops.Value ());
+  let rotatedFirst = @borrow next as xs in do {
+    let rotated = @concat(@slice(xs, 2, 4), @slice(xs, 0, 2));
+    return @get(rotated, 0);
+  };
+  return {
+    .before = @take (@move previous);
+    .after = @take (@move next);
+    .rotatedFirst = rotatedFirst;
+    .joinedLength = joinedLength;
+  };
+};
+return { .run = run; };

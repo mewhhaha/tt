@@ -66,3 +66,15 @@ Do not call the compiler production-ready until every documented gate has eviden
 Do not shrink the gates to finish. Once genuinely complete, report the evidence and
 disable the recurring development task. Until then, keep implemented semantics
 distinct from plans.
+
+## No-GC ownership direction
+
+The owner requires no tracing garbage collection and no reference counting in the
+TT Wasm runtime. Node's own compiler/host memory management is separate. The first
+implemented slice is explicit affine `Owned T` for isolated plain data, lexical
+read borrows, copied snapshots and deterministic whole-block reuse. Read
+`docs/OWNERSHIP.md` before extending it. Existing ordinary immutable values still
+use the invocation arena; do not claim that all legacy values have become linear.
+Never allow ownership, loans, or their obligations to disappear through generic
+substitution, captures, records, operation contracts or module boundaries. Unsupported
+ownership interfaces reject; adding them requires an explicit checked usage rule.

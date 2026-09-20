@@ -1,0 +1,4 @@
+let Ops = import "./operations.tt";
+let Session = import "./session.tt";
+return handle Ops.Step with (fn ignored => 2) in
+  handle Ops.Axis with (fn ignored => 1) in Session.run 10000;

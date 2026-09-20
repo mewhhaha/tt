@@ -1,0 +1,11 @@
+let Ops = import "./operations.tt";
+let move = fn entity => {
+  .id = entity.id;
+  .position = entity.position + entity.velocity * Ops.Step () + Ops.Axis ();
+  .velocity = entity.velocity;
+};
+let advance = fn world => {
+  .frame = world.frame + 1;
+  .entities = map move world.entities;
+};
+return { .advance = advance; };

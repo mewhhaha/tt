@@ -1,124 +1,83 @@
-# TT status — Node compiler / Wasm-only output — 2026-09-17
+# TT status — Node compiler / Wasm-only output — 2026-09-20
 
-**Research prototype, not production-ready.** Current supported implementation is
-local dependency-free Node ES modules; TT executes only as emitted WebAssembly.
-No native/Python implementation, package installation, CI artifact or host TT
-interpreter is required. The production-readiness checklist is unchanged.
+**Research prototype, not production-ready.** The supported implementation is a
+dependency-free Node.js compiler emitting real Wasm. There is no C++/Python
+implementation, source interpreter, custom bytecode target, or required package
+installation. The production-readiness checklist is unchanged.
 
-## Latest performance iteration
+## Ownership and array publication
 
-The emitter now writes directly into growing byte buffers. Numeric expression
-regions keep internal results in Wasm i64 values and box only at existing ABI
-boundaries. Checked operations share one implementation; no reassociation, proof
-skipping or effect/call elision is performed. Text concatenation uses memory.copy
-when fuel suffices, otherwise preserves the old byte loop and partial-write traps.
+This change integrates the previously delivered ownership and array implementations
+on top of `3e135945062e8c950c5fbc465f11f77edc1f9563`. Earlier dated reports describe
+unsuccessful publication attempts; their implementation and measurements are now
+included together, rather than left as partially uploaded source objects.
 
-Fresh local Node 22.16.0 evidence: baseline 202/202 tests passed; modified suite
-217/217 passed. Full local verification, existing compiler/runtime/module gates
-and both example applications passed. No existing test or work limit was weakened.
+Explicit affine `Owned T` plain data supports `@own`, `@move`, `@drop`, independent
+`@snapshot`, scoped read-only `@borrow`, `@take`, consuming `@update`, and `@evolve`.
+The checker rejects duplicate consumption, moved uses, escaped loans, owner captures,
+and unsupported generic interfaces. Whole-owner blocks are deterministically freed
+and reused. Neither tracing garbage collection nor reference counting is used in
+the TT Wasm runtime; Node's own memory management is separate.
 
-Matched warm compilation medians improved from 35.030 to 10.967 ms for 2,000
-record fields/projections and 78.392 to 40.760 ms for 2,000 polymorphic calls. Across
-eight measured workloads the ratio was roughly 1.6-3.2x. New-process record compile
-wall time was 143.595 to 118.769 ms: warm results do not imply the same cold speedup.
-A 5,000-element arithmetic map/fold reduced dynamic bump allocation from 1,240,136
-to 400,136 bytes and Wasm execution from 1.836 to 1.219 ms/call. A simple map/fold
-control was effectively unchanged (0.741 to 0.762 ms). These are local workload
-observations, not cross-engine, whole-language or production-runtime guarantees.
+Arrays support `@get`, `@slice`, `@concat`, and explicit `@materialize`. Read-only
+views share element storage. Slices collapse offsets and adjacent same-base windows
+can rejoin without a descriptor. General concatenations use bounded indirection.
+`@set(@move owner, index, value)` reuses an isolated Int/Bool/Unit array cell once
+read loans end; successful writes reclaim their computed argument scratch.
 
-`compile`, `compileProject` and `run` accept `optimize: false` to retain the
-boxed/byte-loop reference lowering. All static checks still run. Fewer allocations
-can change when the allocation budget fails; raw heap images and addresses are not
-optimization-invariant. Public boxed layouts and ABI 2 remain unchanged.
+See [ownership](OWNERSHIP.md), [arrays](ARRAYS.md), and the
+[publication verification](iterations/2026-09-18-publish-ownership-arrays.md).
 
-See [optimization contracts](OPTIMIZATION.md),
-[exact iteration evidence](iterations/2026-09-17-numeric-performance.md), and
-`benchmarks/numeric-performance.json` for raw matched samples. The previous
-module/effect evidence below is historical; its functionality is retained.
+## Local publication verification
 
-## Implemented module/effect slice
+Fresh local execution on Node v22.16.0 / V8 12.4.254.21-node.26 / Linux x64 passed:
 
-Source modules now have explicit relative imports and returned-record exports.
-Dependencies are parsed/initialized once per main invocation, with canonical
-identities, private lexical names, bounded acyclic graphs and source diagnostics.
-The compiler's project API consumes source Maps or explicit synchronous resolvers;
-only the opt-in CLI file provider reads local files. This is whole-program module
-assembly, not separate compilation or incremental interface caching.
+- `npm test`: **290/290**, zero failures or skips.
+- `npm run verify`: repository policy, syntax checks for restored files, all tests,
+  original examples, README, standalone Wasm, compiler/runtime/module-effect gates,
+  ownership/array gates, and pure/host example applications.
+- Both 10,000-frame owner applications: checksum 40030, 9999 block reuses, zero live
+  owner bytes; the host application performs exactly 40000 explicit callbacks.
+- Both array examples: unchanged `[10,20,30,40]` snapshot, updated `[10,99,30,40]`,
+  rotated first value 30, and joined length 4; host mode performs two callbacks.
 
-Nominal operation declarations, inferred finite effect/call summaries, synchronous
-scoped handlers and explicitly supplied host operations are implemented. Pure
-handlers run entirely in Wasm with no imports. Host wrappers import typed functions
-from `tt.host` and require an explicit callback Map. Scalar/refined results are
-validated before use; callbacks receive copied values, not memory/closure authority.
+The restored source, test and verifier directory Git tree hashes match the staged
+publication bytes. This is a restored executed-input workspace, not a complete
+network clone or cross-engine/platform qualification. Source code and existing
+regressions were not changed during publication. Historical reports retain their
+original dates; this run does not claim their old timings as new measurements.
 
-Effects are retained through supported higher-order calls and discarded results.
-Pure arrow annotations cannot erase requirements. Handler implementations retain
-refinement checks, including deferred checks for generic handler parameters. The
-previous deferred-call precondition regression suite remains unchanged and passes.
+## Retained features and performance boundaries
 
-This is **not** a general resumable algebraic effect system: continuation capture,
-resume/abort/multi-shot behavior and asynchronous host calls remain unimplemented.
-See [MODULES_EFFECTS.md](MODULES_EFFECTS.md) for the exact accepted fragment, limits,
-conservative cases, import initialization order and host trust contract.
+Structural functions, let polymorphism, bounded integer refinements, deferred call
+preconditions, checked i64 arithmetic, source modules, inferred synchronous effect
+summaries, pure Wasm handlers and explicit typed host callbacks remain supported.
+Fast byte emission, numeric intermediate unboxing and bulk Text copying remain active;
+`optimize: false` retains the checked reference lowering.
 
-## Exercised applications
+The array benchmark distinguishes copying writes from in-place writes, and explicit
+materialization from shared views. No universal zero-overhead claim is made. Reads
+through general concatenations cost O(height); snapshots and ownership construction
+copy data. Owner byte counters exclude the fixed 4 MiB arena spacing and are not
+RSS or total capacity. The historical roughly 6.6% polymorphic compile-control
+increase is not hidden by the array runtime gains.
 
-- `examples/effects-workflow`: shared batch transformation/service modules, pure
-  deterministic Scale/Clock/Save/Emit handlers, and explicit host clock/log/save
-  callbacks. Pure total is 90; deterministic test clock yields elapsed 1 in host
-  mode. The example save callback records a value in host memory, not a database.
-- `examples/effects-simulation`: structural movement systems, shared scene, refined
-  step/input operations, pure handlers and checked host callbacks. Both modes
-  produce positions 17/17 and checksum 34. Invalid host input is rejected before
-  reporting. This is a one-step simulation, not the complete systems-only ECS.
+Historical evidence and reproduction commands:
+[ownership iteration](iterations/2026-09-18-owned-data.md),
+[array iteration](iterations/2026-09-18-array-views.md), and
+[numeric performance](iterations/2026-09-17-numeric-performance.md).
 
-## Historical module/effect evidence
+## Remaining work
 
-Baseline main: `09eb97c5a8da7eaf97e039300ba5ab713f64295d`.
-Environment: Node v22.16.0 / V8 12.4.254.21-node.26 / Linux x64.
-All execution was local, with no dependency installation, Python, native compiler,
-network-dependent checking or CI result substituted for a local run.
+Ordinary legacy values still use the invocation arena. This is explicit ownership,
+not ownership-by-default for every value. Snapshots copy independently. Full usage
+polymorphism, owner-containing closures/containers, nonlexical loans, external
+resource finalizers, persistent callable host handles, balanced concatenation trees,
+and variable-sized in-place setters remain unsupported.
 
-- Exact baseline production sources plus existing tests: 155/155 passed.
-- Updated suite: **202/202 passed**, including 47 new module/effect/application,
-  negative/adversarial and cost tests; existing tests were not weakened.
-- `npm run verify`: passed repository policy, JS syntax checks, 202 tests, all four
-  original source/saved-Wasm examples, README, standalone Wasm execution, existing
-  five-workload compiler gates at 500/1000/2000 and map/fold engine-stage checks.
-  It now also runs the module/effect scale gates and both explicit host runners.
-- Explicit compiler, runtime and module/effect benchmark commands passed, with 11
-  samples and separate phase measurements. Runtime checksum stayed 500500.
-- Nine existing pure single-source programs produced byte-identical Wasm against
-  the exact pre-change compiler. Pure-handler examples have zero imports; host
-  manifests contain only their explicit typed operation imports.
-
-All baseline production and executed existing test/harness inputs were recovered
-from the pinned repository and checked by Git blob hashes. This is not a network
-clone or cross-platform qualification. `benchmarks/modules-effects-inputs.json`
-records final executed-input hashes; `benchmarks/modules-effects.json` retains raw
-samples and workload identities. Detailed results/commands are in
-[the iteration note](iterations/2026-09-17-modules-effects.md).
-
-## Performance boundary
-
-New module/effect workloads have deterministic work/size gates. Local medians for
-500/1000/2000 discarded effect calls were 10.125/17.719/32.217 ms; diamond module
-graphs with 32/64/128 branches measured 4.518/4.569/8.271 ms. These are warm local
-parse/check/emit/validate observations, not a matched speedup or whole-compiler
-complexity proof. The phase data separates effect analysis from refinement checking.
-Host callback time is recorded separately but is nested inside Wasm execute time.
-
-## Remaining gates
-
-General effect rows/continuations, variants/recursion, static execution/reflection,
-nominal descriptor providers and the real ECS slice, exported callable ownership,
-GC/reclamation, separate/incremental compilation and stable ABI remain open.
-Effect-aware fold currently requires scalar accumulators; qualified effect rows,
-host Text/aggregate results and async callbacks are not supported. Host capabilities
-are trusted synchronous code and their duration is not bounded by TT fuel. Digests
-and decoder integrity checks are not a hostile-module sandbox.
-
-Next useful work: broaden a documented conservative effect/container case with
-regressions, then variants/recursion and stable declaration evidence. Do not equate
-these two example applications or passing tests with production readiness.
-Historical evidence remains in the dated status/iteration notes and benchmark data.
+General resumable/async effect handlers, variants/recursion, separate or incremental
+module checking, nominal providers and the systems-only ECS, compile-time evaluation,
+and stable ABI/cross-platform qualification remain open. Host callbacks are trusted
+synchronous code: TT fuel does not bound their duration or roll back I/O. Integrity
+metadata is not authentication or a hostile-module sandbox. Do not shrink the
+production gates to describe this prototype as complete.

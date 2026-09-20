@@ -4,6 +4,7 @@ const wordStart = c => /[a-zA-Z_@]/.test(c ?? '');
 const wordRest = c => /[a-zA-Z_@0-9]/.test(c ?? '');
 const digit = c => c !== undefined && c >= '0' && c <= '9';
 const doubles = new Set(['=>', '->', '::', '==', '!=', '<=', '>=', '&&', '||', '..']);
+const arrayForms = new Map([['@get',['ArrayGet',2]],['@slice',['ArraySlice',3]],['@concat',['ArrayConcat',2]],['@set',['ArraySet',3]],['@materialize',['ArrayMaterialize',1]]]);
 const comparisons = new Set(['<', '>', '<=', '>=', '==', '!=']);
 const reserved = new Set(['then', 'else', 'return', 'let', 'const', 'where', 'with', 'in', 'effect']);
 const precedence = new Map([['||', 1], ['&&', 2], ['==', 3], ['!=', 3],
@@ -88,7 +89,8 @@ export class Parser {
     enter(this, this.t.pos);
     try {
       let result;
-      if (this.eat('(')) { result = this.type(); this.need(')'); }
+      if (this.eat('Owned')) { this.ast.ownership = true; result = contract('Owned', this.typeAtom()); }
+      else if (this.eat('(')) { result = this.type(); this.need(')'); }
       else if (this.eat('[')) { result = contract('Array', this.type()); this.need(']'); }
       else if (this.eat('{')) {
         result = contract('Record'); const seen = new Set();
@@ -161,10 +163,32 @@ export class Parser {
       else if (this.t.kind === 'string') { e.kind = 'Text'; e.text = this.take().text; }
       else if (this.eat('true')) { e.kind = 'Bool'; e.number = true; }
       else if (this.eat('false')) { e.kind = 'Bool'; e.number = false; }
+      else if (this.t.kind === 'word' && this.t.text[0] === '@' && arrayForms.has(this.t.text)) {
+        const [kind,arity] = arrayForms.get(this.take().text); e.kind = kind;
+        this.ast.arrays = true; if (kind === 'ArraySet') this.ast.ownership = true;
+        this.need('('); e.a = this.expr();
+        if (arity >= 2) { this.need(','); e.b = this.expr(); }
+        if (arity === 3) { this.need(','); e.c = this.expr(); }
+        this.need(')');
+      }
       else if (this.eat('import')) {
         if (this.t.kind !== 'string') fail(this.t.pos, 'import requires a literal relative .tt path', 'E_MODULE');
         e.kind = 'Import'; e.text = this.take().text;
       } else if (this.eat('host')) { e.kind = 'Host'; e.a = this.postfix(); }
+      else if (['@own', '@move', '@drop', '@snapshot', '@take'].some(word => this.is(word))) {
+        this.ast.ownership = true;
+        e.kind = ({ own: 'Own', move: 'Move', drop: 'Drop', snapshot: 'Snapshot', take: 'Take' })[this.take().text.slice(1)];
+        e.a = this.postfix();
+      } else if (this.eat('@borrow')) {
+        this.ast.ownership = true; e.kind = 'Borrow'; e.a = this.postfix();
+        this.need('as'); e.name = this.word(); this.need('in'); e.b = this.expr();
+      } else if (this.eat('@update')) {
+        this.ast.ownership = true; e.kind = 'Update'; e.a = this.postfix();
+        this.need('with'); e.b = this.expr();
+      } else if (this.eat('@evolve')) {
+        this.ast.ownership = true; e.kind = 'Evolve'; e.a = this.postfix();
+        this.need('by'); e.b = this.expr(); this.need('with'); e.c = this.expr();
+      }
       else if (this.eat('handle')) {
         e.kind = 'Handle'; e.a = this.postfix(); this.need('with'); e.b = this.expr(); this.need('in'); e.c = this.expr();
       } else if (this.eat('fn')) {

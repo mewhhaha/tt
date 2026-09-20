@@ -1,0 +1,4 @@
+let Ops = import "./operations.tt";
+let Arrays = import "./arrays.tt";
+return handle Ops.Index with (fn ignored => 1) in
+  handle Ops.Value with (fn ignored => 99) in Arrays.run ();

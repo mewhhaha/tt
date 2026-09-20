@@ -29,6 +29,7 @@ export function evidence(c) {
   switch (c.kind) {
     case 'Int': return intEvidence(c.range);
     case 'Function': return pairEvidence('Function', evidence(c.a), evidence(c.b));
+    case 'Owned': return pairEvidence('Owned', evidence(c.a));
     case 'Array': return pairEvidence('Array', evidence(c.a));
     case 'Record': return { kind: 'Record', fields: new Map(c.fields.map(([n, v]) => [n, evidence(v)])) };
     default: return null;
@@ -53,7 +54,7 @@ export class Refine {
         case 'Param': return a.binder === b.binder && this.same(a.base, b.base);
         case 'Project': return a.name === b.name && this.same(a.source, b.source) && this.same(a.base, b.base);
         case 'Apply': return a.type === b.type && this.same(a.fn, b.fn) && this.same(a.arg, b.arg) && this.same(a.required, b.required) && this.same(a.base, b.base);
-        case 'Array': return this.same(a.a, b.a) && this.same(a.b, b.b);
+        case 'Owned': case 'Array': return this.same(a.a, b.a) && this.same(a.b, b.b);
         case 'Function': return this.same(a.a, b.a) && this.same(a.b, b.b) &&
           (a.calls?.length ?? 0) === (b.calls?.length ?? 0) &&
           (a.calls ?? []).every((call, i) => this.same(call, b.calls[i]));
@@ -80,6 +81,7 @@ export class Refine {
         const arg = this.substitute(value.arg, binder, argument, pos, pending);
         return this.applyEvidence(fn, arg, pos, value.type, pending);
       }
+      case 'Owned': return pairEvidence('Owned', this.substitute(value.a, binder, argument, pos, pending));
       case 'Array': return pairEvidence('Array', this.substitute(value.a, binder, argument, pos, pending));
       case 'Function': {
         // The returned closure's obligations belong to its future body, not the
@@ -106,7 +108,7 @@ export class Refine {
         this.collectDirectRequirements(value.fn, binder, out, seen);
         this.collectDirectRequirements(value.arg, binder, out, seen);
         this.collectDirectRequirements(value.base, binder, out, seen); break;
-      case 'Array': this.collectDirectRequirements(value.a, binder, out, seen); break;
+      case 'Owned': case 'Array': this.collectDirectRequirements(value.a, binder, out, seen); break;
       case 'Function':
         this.collectDirectRequirements(value.a, binder, out, seen);
         this.collectDirectRequirements(value.b, binder, out, seen); break;
@@ -198,7 +200,7 @@ export class Refine {
       switch (t.kind) {
         case 'Int': return ranges(actual).subset(ranges(required));
         case 'Function': return this.functionEntails(actual, required, t, pos);
-        case 'Array': return this.entails(part(actual), part(required), t.a, pos);
+        case 'Owned': case 'Array': return this.entails(part(actual), part(required), t.a, pos);
         case 'Record': {
           for (const [n, ty] of this.types.flatten(t.a, pos).fields)
             if (!this.entails(field(actual, n), field(required, n), ty, pos)) return false;
@@ -222,6 +224,7 @@ export class Refine {
       const t = this.types.nodes[this.types.find(type)];
       switch (t.kind) {
         case 'Int': return intEvidence(Ranges.unite(ranges(a), ranges(b)));
+        case 'Owned': return pairEvidence('Owned', this.join(part(a), part(b), t.a, pos));
         case 'Array': return pairEvidence('Array', this.join(part(a), part(b), t.a, pos));
         case 'Record': return { kind: 'Record', fields: new Map([...this.types.flatten(t.a, pos).fields]
           .map(([n, ty]) => [n, this.join(field(a, n), field(b, n), ty, pos)])) };
@@ -284,6 +287,32 @@ export class Refine {
         case 'Int': out = intEvidence(Ranges.one(e.number)); break;
         case 'Bool': case 'Text': case 'Unit': break;
         case 'Var': out = this.env[e.binder]; break;
+        case 'ArrayGet': case 'ArraySlice': case 'ArrayConcat': case 'ArraySet': case 'ArrayMaterialize': {
+          const a = this.expression(e.a), b = e.b < 0 ? null : this.expression(e.b), c = e.c < 0 ? null : this.expression(e.c);
+          if (e.kind === 'ArrayGet') out = part(a);
+          else if (e.kind === 'ArraySet') {
+            const elem = this.types.nodes[this.types.find(this.types.nodes[this.types.find(e.type)].a)].a;
+            out = pairEvidence('Owned', pairEvidence('Array', this.join(part(part(a)), c, elem, e.pos)));
+          } else if (e.kind === 'ArrayConcat') {
+            const elem = this.types.nodes[this.types.find(e.type)].a;
+            out = pairEvidence('Array', this.join(part(a), part(b), elem, e.pos));
+          } else out = a;
+          break;
+        }
+        case 'Own': out = pairEvidence('Owned', this.expression(e.a)); break;
+        case 'Move': case 'Snapshot': out = this.expression(e.a); break;
+        case 'Drop': this.expression(e.a); break;
+        case 'Take': out = part(this.expression(e.a)); break;
+        case 'Borrow': {
+          this.env[e.binder] = part(this.expression(e.a)); out = this.expression(e.b, expected, checking); break;
+        }
+        case 'Update': case 'Evolve': {
+          this.expression(e.a); if (e.kind === 'Evolve') this.expression(e.b);
+          const id = e.kind === 'Evolve' ? e.c : e.b;
+          const callback = this.expression(id);
+          this.require(callback, null, this.ast.nodes[id].type, e.pos);
+          out = pairEvidence('Owned', null); break;
+        }
         case 'Effect': out = evidence(e.contract); break;
         case 'Host': this.expression(e.a); out = evidence(e.effectContract); break;
         case 'Handle': {

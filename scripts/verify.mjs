@@ -37,6 +37,12 @@ try {
   child(['benchmarks/modules-effects.mjs']);
   child(['examples/effects-workflow/run.mjs']);
   child(['examples/effects-simulation/run.mjs', '2', '1']);
+  child(['benchmarks/ownership.mjs']);
+  child(['examples/ownership-frames/run.mjs', 'pure']);
+  child(['examples/ownership-frames/run.mjs', 'host']);
+  child(['benchmarks/array-views.mjs']);
+  child(['examples/array-views/run.mjs','pure']);
+  child(['examples/array-views/run.mjs','host']);
   // Run outside the source tree with PATH removed: the compiler needs only its Node runtime and source modules.
   const dir = mkdtempSync(join(tmpdir(), 'tt-standalone-'));
   try {

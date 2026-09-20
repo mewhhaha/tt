@@ -159,11 +159,29 @@ collections still execute inside Wasm. See the [provisional ABI](docs/WASM.md) a
 [extension contract](docs/MODULES_EFFECTS.md). Host callbacks are trusted synchronous
 code: TT fuel does not bound their duration, and failed runs do not roll back I/O.
 
+## Explicit no-GC owners (experimental)
+
+`Owned T` provides isolated affine plain-data owners with lexical read borrows,
+consuming updates, copied snapshots and deterministic whole-block reclamation.
+Neither tracing garbage collection nor reference counting runs in the TT runtime.
+Node's own memory management is separate. Existing ordinary values still use the
+invocation arena; this is not ownership-by-default for all legacy code.
+
+`let next = @update (@move current) with step;` transfers an owner. Read through
+`@borrow current as view in body`; retain an independent version with
+`@snapshot current`; copy data out and consume an owner with `@take (@move current)`.
+`@evolve` repeats a checked data transformation with bounded reusable storage.
+
+Run `node examples/ownership-frames/run.mjs pure` or select `host` for the
+same 10,000-frame simulation using explicit Step/Axis callbacks. The retained initial
+snapshot remains unchanged. See [ownership semantics and limits](docs/OWNERSHIP.md)
+for unsupported captures, usage-polymorphic interfaces and allocation tradeoffs.
+
 ## Open milestones
 
 Separate/incremental module checking, exported compile-time type values, general
 row polymorphism, resumable algebraic handlers, variants, recursion, nominal provider
-metadata, ownership/GC, static evaluation/tags, stable host-callable closures, and
+metadata, broader ownership and deterministic reclamation, static evaluation/tags, stable host-callable closures, and
 cross-engine/platform qualification remain open. A closed digest or fuel counter is
 not a hostile-code sandbox. Never run untrusted Wasm in a shared Node process.
 
@@ -171,3 +189,23 @@ Current main contains only Node/Wasm implementation files. Historical C++ and TT
 notes/data remain provenance, not supported implementations or targets. See
 [design](docs/DESIGN.md), [syntax](docs/SYNTAX.md), [local development](docs/LOCAL_DEVELOPMENT.md),
 [roadmap](docs/ROADMAP.md), [status](docs/STATUS.md), and [production gates](docs/PRODUCTION_READINESS.md).
+
+## Immutable array views and consuming writes
+
+`@slice(xs, lo, hi)` and `@concat(a, b)` share immutable element storage.
+`@get(xs, i)` reads through the bounded representation; `@materialize(xs)` explicitly
+builds a flat pointer vector. Active owner loans cannot escape or overlap a consuming
+write. `@set(@move owner, i, value)` reuses an isolated Int/Bool/Unit array cell, with
+no new owner allocation in the default lowering. Snapshots still copy independently.
+
+```sh
+node examples/array-views/run.mjs pure
+node examples/array-views/run.mjs host
+node benchmarks/array-views.mjs array-report.json
+```
+
+General concatenation uses indirection, not contiguous zero-cost storage. See
+[the exact costs and limits](docs/ARRAYS.md), and
+[the locally verified iteration](docs/iterations/2026-09-18-array-views.md).
+The ownership and array layers are included together in this commit. See
+[publication verification](docs/iterations/2026-09-18-publish-ownership-arrays.md).

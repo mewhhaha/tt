@@ -1,15 +1,17 @@
 /** Runtime helpers are emitted as real Wasm functions, not JavaScript imports. */
 import { I32, I64 } from './wasm-binary.mjs';
 import { INTEGER_OPS, isComparison, emitIntegerBinary, emitIntegerNeg } from './wasm-integers.mjs';
-export const Tag = Object.freeze({ Unit: 0, Int: 1, Bool: 2, Text: 3, Array: 4, Record: 5, Closure: 6 });
+export const Tag = Object.freeze({ Unit: 0, Int: 1, Bool: 2, Text: 3, Array: 4, Record: 5, Closure: 6, Slice: 7, Concat: 8 });
 export const G = Object.freeze({ heap: 0, error: 1, fuel: 2, limit: 3, depth: 4, position: 5 });
 export const Errors = Object.freeze({
+  15: ['E_OWNERSHIP', 'invalid owning storage or non-data payload'], 16: ['E_RUNTIME', 'negative evolve iteration count'],
   1: ['E_RUNTIME', 'integer overflow'], 2: ['E_RUNTIME', 'division by zero'],
   3: ['E_RUNTIME', 'remainder by zero'], 4: ['E_RUNTIME', 'array index out of bounds'],
   5: ['E_RUNTIME', 'invalid runtime value kind'], 6: ['E_RUNTIME', 'missing record field'],
   7: ['E_LIMIT', 'Wasm linear-memory allocation budget exhausted'], 8: ['E_LIMIT', 'execution fuel exhausted'],
   9: ['E_LIMIT', 'call depth limit exceeded'], 10: ['E_LIMIT', 'value nesting limit exceeded'],
   13: ['E_EFFECT_UNHANDLED', 'no active handler for effect'], 14: ['E_HOST', 'host result violates its declared contract'],
+  17: ['E_LIMIT', 'array view height or length limit exceeded'],
   11: ['E_LIMIT', 'text size limit exceeded'], 12: ['E_RUNTIME', 'invalid execution fuel'],
 });
 const failIf = (f, code) => f.if().i32(code).call('trap').end();
@@ -45,7 +47,7 @@ function closure(roots) {
   }
   return wanted;
 }
-export function installRuntime(m, constants, roots, bulkMemory = false) {
+export function installRuntime(m, constants, roots, bulkMemory = false, ownership = null, arrays = null) {
   const wanted = closure(roots);
   const sig = wanted.has('invoke') ? m.type([I32, I32], [I32]) : null;
   // Predeclare: direct call indices never depend on later demand/definition order.
@@ -63,13 +65,15 @@ export function installRuntime(m, constants, roots, bulkMemory = false) {
   ];
   const fs = new Map(defs.filter(([name]) => wanted.has(name)).map(([name, p, r]) => [name, m.func(name, p, r)]));
   let f;
-  if (fs.has('trap')) { f = fs.get('trap'); f.i32(8).gget(G.position).store(); f.get(0).gset(G.error).add(0x00); }
+  if (fs.has('trap')) { f = fs.get('trap'); f.i32(8).gget(G.position).store(); f.get(0).gset(G.error); if (ownership) f.call('owner_reset'); f.add(0x00); }
   if (fs.has('tick')) { f = fs.get('tick'); f.gget(G.fuel).add(0x50); failIf(f, 8); f.gget(G.fuel).i64(1).add(0x7d).gset(G.fuel); }
   if (fs.has('alloc')) { f = fs.get('alloc'); {
     const old = f.local(), end = f.local(), pages = f.local();
     f.get(0).i32(64 * 1024 * 1024 - 8).add(0x4b); failIf(f, 7);
     f.get(0).i32(7).add(0x6a).i32(-8).add(0x71).set(0);
-    f.gget(G.heap).tee(old).get(0).add(0x6a).tee(end).i32(64 * 1024 * 1024).add(0x4b); failIf(f, 7);
+    f.gget(G.heap).tee(old).get(0).add(0x6a).tee(end);
+    if (ownership) f.gget(ownership.globals.start); else f.i32(64 * 1024 * 1024);
+    f.add(0x4b); failIf(f, 7);
     f.get(end).i32(65535).add(0x6a).i32(16).add(0x76).set(pages);
     f.get(pages).add(0x3f, 0).add(0x4b).if();
     f.get(pages).add(0x3f, 0, 0x6b, 0x40, 0).i32(-1).add(0x46); failIf(f, 7); f.end();
@@ -118,9 +122,10 @@ export function installRuntime(m, constants, roots, bulkMemory = false) {
     storeCapture(x, p, count - 1, 1); x.get(p);
   };
   curry('get1', 'get2', 1); curry('map1', 'map2', 1); curry('fold1', 'fold2', 1); curry('fold2', 'fold3', 2); curry('concat1', 'concat2', 1);
-  if (fs.has('length')) { f = fs.get('length'); f.get(1).i32(Tag.Array).call('kind').load(4).add(0xad).call('box'); }
+  if (fs.has('length')) { f = fs.get('length'); f.get(1); if(arrays)f.call('array_count');else f.i32(Tag.Array).call('kind').load(4); f.add(0xad).call('box'); }
   if (fs.has('textLength')) { f = fs.get('textLength'); f.get(1).i32(Tag.Text).call('kind').load(4).add(0xad).call('box'); }
-  if (fs.has('get2')) { f = fs.get('get2'); {
+  if (fs.has('get2') && arrays) { f=fs.get('get2');f.get(0).load(16).get(1).call('integer').call('array_get'); }
+  if (fs.has('get2') && !arrays) { f = fs.get('get2'); {
     const array = f.local(), index = f.local(I64); f.get(0).load(16).i32(Tag.Array).call('kind').set(array);
     f.get(1).call('integer').tee(index).i64(0).add(0x53); failIf(f, 4);
     f.get(index).get(array).load(4).add(0xad, 0x5a); failIf(f, 4);
@@ -130,11 +135,13 @@ export function installRuntime(m, constants, roots, bulkMemory = false) {
     if (!fs.has(name)) continue;
     f = fs.get(name); const len = f.local(), i = f.local(), result = f.local(), item = f.local(), site = f.local();
     f.gget(G.position).set(site);
-    f.get(1).i32(Tag.Array).call('kind').drop(); f.get(1).load(4).set(len);
+    if(arrays)f.get(1).call('array_count').set(len);
+    else { f.get(1).i32(Tag.Array).call('kind').drop(); f.get(1).load(4).set(len); }
     if (name === 'map2') f.get(len).i32(4).add(0x6c).i32(16).add(0x6a).i32(Tag.Array).get(len).call('object').set(result);
     else f.get(0).load(20).set(result);
     f.block().loop().get(i).get(len).add(0x4f).brIf(1).call('tick');
-    f.get(1).get(i).i32(4).add(0x6c, 0x6a).load(16).set(item);
+    if(arrays)f.get(1).get(i).add(0xad).call('array_get').set(item);
+    else f.get(1).get(i).i32(4).add(0x6c, 0x6a).load(16).set(item);
     f.get(site).gset(G.position).get(0).load(16);
     if (name === 'fold3') f.get(result).call('invoke').get(site).gset(G.position);
     f.get(item).call('invoke').get(site).gset(G.position);

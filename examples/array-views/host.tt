@@ -1,0 +1,4 @@
+let Ops = import "./operations.tt";
+let Arrays = import "./arrays.tt";
+return handle Ops.Index with host Ops.Index in
+  handle Ops.Value with host Ops.Value in Arrays.run ();

@@ -168,6 +168,24 @@ export class Effects {
       switch (e.kind) {
         case 'Int': case 'Bool': case 'Unit': case 'Text': return result();
         case 'Var': return result(this.env[e.binder] ?? null);
+        case 'ArrayGet': case 'ArraySlice': case 'ArrayConcat': case 'ArraySet': case 'ArrayMaterialize': {
+          const a = this.expression(e.a), b = e.b < 0 ? result() : this.expression(e.b), c = e.c < 0 ? result() : this.expression(e.c);
+          const value = e.kind === 'ArrayGet' ? this.element(a.value) : e.kind === 'ArraySet' ? null :
+            e.kind === 'ArrayConcat' ? {kind:'Array',value:this.choice(this.element(a.value),this.element(b.value))} : a.value;
+          return result(value, this.union(a.terms,b.terms,c.terms));
+        }
+        case 'Own': case 'Move': case 'Drop': case 'Snapshot': case 'Take':
+          return result(null, this.expression(e.a).terms);
+        case 'Borrow': {
+          const owner = this.expression(e.a); this.env[e.binder] = null;
+          const body = this.expression(e.b, expected); return result(body.value, this.union(owner.terms, body.terms));
+        }
+        case 'Update': case 'Evolve': {
+          const owner = this.expression(e.a), count = e.kind === 'Evolve' ? this.expression(e.b) : result();
+          const fn = this.expression(e.kind === 'Evolve' ? e.c : e.b);
+          const call = this.call(fn.value, null, e.pos);
+          return result(null, this.union(owner.terms, count.terms, fn.terms, call.terms));
+        }
         case 'Effect': {
           const op = { kind: 'Operation', key: e.key, term: 'effect:' + e.key, contract: e.contract, host: false };
           this.operations.set(e.key, op); return result(op);

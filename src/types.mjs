@@ -16,6 +16,7 @@ export class Types {
     return this.nodes.length - 1;
   }
   fresh(level, rowVar = false) { return this.add({ kind: 'Var', level, rowVar }); }
+  owned(a) { return this.add({ kind: 'Owned', a }); }
   array(a) { return this.add({ kind: 'Array', a }); }
   function(a, b) { return this.add({ kind: 'Function', a, b }); }
   row(fields, a = NONE) { return this.add({ kind: 'Row', fields, a }); }
@@ -86,7 +87,7 @@ export class Types {
       if (x.kind !== y.kind) fail(pos, 'incompatible type shapes');
       switch (x.kind) {
         case 'Function': this.unify(x.a, y.a, pos); this.unify(x.b, y.b, pos); break;
-        case 'Array': case 'Record': this.unify(x.a, y.a, pos); break;
+        case 'Owned': case 'Array': case 'Record': this.unify(x.a, y.a, pos); break;
         case 'Row': this.unifyRows(a, b, pos); break;
       }
     } finally { this.depth--; }
@@ -152,6 +153,7 @@ export class Types {
       switch (c.kind) {
         case 'Int': return this.integer; case 'Bool': return this.boolean;
         case 'Text': return this.text; case 'Unit': return this.unit;
+        case 'Owned': return this.owned(this.from(c.a, level));
         case 'Array': return this.array(this.from(c.a, level));
         case 'Function': return this.function(this.from(c.a, level), this.from(c.b, level));
         case 'Record': return this.record(c.fields.map(([n, v]) => [n, this.from(v, level)]), this.fresh(level, true));
@@ -167,6 +169,7 @@ export class Types {
       switch (t.kind) {
         case 'Var': if (!vars.has(id)) vars.set(id, vars.size); return `${t.rowVar ? '..r' : "'t"}${vars.get(id)}`;
         case 'Int': case 'Bool': case 'Text': case 'Unit': return t.kind;
+        case 'Owned': return `Owned ${go(t.a, depth + 1)}`;
         case 'Array': return `[${go(t.a, depth + 1)}]`;
         case 'Function': return `(${go(t.a, depth + 1)} -> ${go(t.b, depth + 1)})`;
         case 'Record': return go(t.a, depth + 1);
@@ -212,6 +215,31 @@ export class Infer {
         case 'Var': {
           const s = this.lookup(e.name, e.pos); e.binder = s.binder;
           out = s.polymorphic ? t.instantiate(s.type, s.cutoff, level) : s.type; break;
+        }
+        case 'ArrayGet': case 'ArraySlice': case 'ArrayConcat': case 'ArraySet': case 'ArrayMaterialize': {
+          const elem = t.fresh(level), array = t.array(elem), input = this.expression(e.a, level);
+          t.unify(input, e.kind === 'ArraySet' ? t.owned(array) : array, e.pos);
+          if (e.kind === 'ArrayConcat') t.unify(this.expression(e.b, level), array, e.pos);
+          else if (e.kind !== 'ArrayMaterialize') t.unify(this.expression(e.b, level), t.integer, e.pos);
+          if (e.kind === 'ArraySlice') t.unify(this.expression(e.c, level), t.integer, e.pos);
+          if (e.kind === 'ArraySet') t.unify(this.expression(e.c, level), elem, e.pos);
+          out = e.kind === 'ArraySet' ? t.owned(array) : e.kind === 'ArrayGet' ? elem : array;
+          break;
+        }
+        case 'Own': out = t.owned(this.expression(e.a, level)); break;
+        case 'Move': case 'Snapshot': out = this.expression(e.a, level); t.unify(out, t.owned(t.fresh(level)), e.pos); break;
+        case 'Drop': { const owner = this.expression(e.a, level); t.unify(owner, t.owned(t.fresh(level)), e.pos); out = t.unit; break; }
+        case 'Take': { const owner = this.expression(e.a, level); out = t.fresh(level); t.unify(owner, t.owned(out), e.pos); break; }
+        case 'Borrow': {
+          const owner = this.expression(e.a, level), view = t.fresh(level); t.unify(owner, t.owned(view), e.pos);
+          e.binder = this.nextBinder++; this.env.push(new Map([[e.name, { type: view, binder: e.binder, cutoff: Infinity, polymorphic: false }]]));
+          out = this.expression(e.b, level); this.env.pop(); break;
+        }
+        case 'Update': case 'Evolve': {
+          out = this.expression(e.a, level); const data = t.fresh(level); t.unify(out, t.owned(data), e.pos);
+          if (e.kind === 'Evolve') t.unify(this.expression(e.b, level), t.integer, e.pos);
+          const fn = this.expression(e.kind === 'Evolve' ? e.c : e.b, level);
+          t.unify(fn, t.function(data, data), e.pos); break;
         }
         case 'Import': fail(e.pos, 'imports require compileProject or the file CLI', 'E_MODULE'); break;
         case 'Effect': out = t.from(e.contract, level); break;

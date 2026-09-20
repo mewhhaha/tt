@@ -38,7 +38,7 @@ effect calculus; exact restrictions are in MODULES_EFFECTS.md.
 
 ## Runtime, qualification and release
 
-Wasm remains the only executable target. Audit and improve allocation, ownership/GC,
+Wasm remains the only executable target. Audit and improve allocation, ownership and deterministic reclamation,
 layout selection, host-callable closure handles, lifetime/release, copying, traps,
 and explicit external capability protocols. Never introduce a TT interpreter,
 JavaScript/native executable backend or CI artifact as an alternate semantic path.
@@ -56,3 +56,12 @@ alone are not a hostile-code sandbox or transactional I/O model.
 Compare unification+rows against a reduced subtype-bound core using the same programs,
 staging rules and safety obligations. Do not drop useful abstractions just to improve
 a synthetic benchmark. Do not shrink the production checklist to mark completion.
+
+## Ownership direction (2026-09-18)
+
+No tracing GC or reference counting is allowed in the TT runtime. The implemented
+explicit Owned/plain-data slice is documented in OWNERSHIP.md. Extend it toward
+usage-polymorphic interfaces, owner-containing data/closures, checked splitting and
+more flexible allocation without weakening lifetime checks. Ordinary invocation
+values have not all become linear, and broad ownership/resource policy remains a
+production gate. Node compiler/host memory management is separate.
